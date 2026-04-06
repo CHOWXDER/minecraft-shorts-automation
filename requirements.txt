@@ -1,0 +1,4 @@
+praw
+google-cloud-texttospeech
+pytube
+ffmpeg-python
