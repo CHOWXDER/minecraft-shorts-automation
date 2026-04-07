@@ -154,9 +154,10 @@ if not os.path.exists("temp/minecraft.mp4"):
     subprocess.run(
         [
             sys.executable, "-m", "yt_dlp",
+            "--js-runtimes", "node",
             "--cookies-from-browser", "firefox",
             "-o", "temp/minecraft.mp4",
-            "-f", "bv*+ba/b",  # best video + best audio, any format
+            "-f", "18/93/best[ext=mp4]",  # single mp4 with audio, no merging
             MINECRAFT_URL,
         ],
         check=True,
