@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tower Defense</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { display: flex; background: #0f1923; color: #e0e0e0; font-family: monospace; user-select: none; }
+  #game-area { flex: 0 0 780px; display: flex; flex-direction: column; }
+  canvas { display: block; cursor: crosshair; }
+  #wave-bar {
+    display: flex; justify-content: space-around; align-items: center;
+    background: #1a2636; padding: 8px 12px; font-size: 13px; border-top: 1px solid #2a3a4a;
+  }
+  #wave-bar span { color: #90caf9; }
+  #wave-bar b { color: #fff; }
+  #sidebar {
+    width: 240px; background: #131f2e; padding: 14px; display: flex;
+    flex-direction: column; gap: 14px; border-left: 1px solid #1e2f40;
+  }
+  #sidebar h2 { font-size: 14px; color: #90caf9; border-bottom: 1px solid #1e2f40; padding-bottom: 6px; }
+  .tower-btn {
+    display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+    background: #1a2636; border: 1px solid #2a3a4a; border-radius: 6px;
+    cursor: pointer; transition: border-color 0.15s; font-family: monospace; color: #e0e0e0; font-size: 12px;
+  }
+  .tower-btn:hover { border-color: #4fc3f7; }
+  .tower-btn.active { border-color: #4fc3f7; background: #1e3248; }
+  .tower-dot { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+  .tower-btn .cost { margin-left: auto; color: #ffd54f; }
+  #info-panel { background: #1a2636; border: 1px solid #2a3a4a; border-radius: 6px; padding: 10px; font-size: 12px; }
+  #info-panel h3 { color: #ce93d8; margin-bottom: 6px; font-size: 13px; }
+  #info-panel .stat { color: #b0bec5; margin: 3px 0; }
+  #info-panel .stat b { color: #fff; }
+  .action-btn {
+    width: 100%; padding: 7px; margin-top: 6px; border: none; border-radius: 5px;
+    cursor: pointer; font-family: monospace; font-size: 12px; font-weight: bold;
+  }
+  #upgrade-btn { background: #1b5e20; color: #a5d6a7; }
+  #upgrade-btn:hover { background: #2e7d32; }
+  #upgrade-btn:disabled { background: #2a3a4a; color: #546e7a; cursor: default; }
+  #sell-btn { background: #4a1010; color: #ef9a9a; }
+  #sell-btn:hover { background: #6a1515; }
+  #wave-btn {
+    padding: 10px; border: none; border-radius: 6px; cursor: pointer;
+    font-family: monospace; font-size: 13px; font-weight: bold;
+    background: #1a3a20; color: #81c784; margin-top: auto;
+  }
+  #wave-btn:hover { background: #2a5a30; }
+  #wave-btn:disabled { background: #2a3a4a; color: #546e7a; cursor: default; }
+  #msg { font-size: 11px; color: #ef9a9a; min-height: 16px; }
+</style>
+</head>
+<body>
+<div id="game-area">
+  <canvas id="game" width="780" height="540"></canvas>
+  <div id="wave-bar">
+    <span>Wave <b id="b-wave">0</b></span>
+    <span>Gold <b id="b-gold">150</b></span>
+    <span>Lives <b id="b-lives">20</b></span>
+    <span>Score <b id="b-score">0</b></span>
+  </div>
+</div>
+<div id="sidebar">
+  <div>
+    <h2>Towers</h2>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
+      <div class="tower-btn" id="btn-basic" onclick="selectType('basic')">
+        <div class="tower-dot" style="background:#4fc3f7"></div>
+        <div><div>Basic</div><div style="color:#78909c;font-size:10px;">Balanced</div></div>
+        <span class="cost">75g</span>
+      </div>
+      <div class="tower-btn" id="btn-sniper" onclick="selectType('sniper')">
+        <div class="tower-dot" style="background:#ce93d8"></div>
+        <div><div>Sniper</div><div style="color:#78909c;font-size:10px;">Long range</div></div>
+        <span class="cost">150g</span>
+      </div>
+      <div class="tower-btn" id="btn-splash" onclick="selectType('splash')">
+        <div class="tower-dot" style="background:#ffb74d"></div>
+        <div><div>Splash</div><div style="color:#78909c;font-size:10px;">AOE damage</div></div>
+        <span class="cost">125g</span>
+      </div>
+    </div>
+  </div>
+  <div id="info-panel" style="display:none">
+    <h3 id="info-name">Tower</h3>
+    <div class="stat">Damage: <b id="info-dmg">-</b></div>
+    <div class="stat">Range: <b id="info-range">-</b></div>
+    <div class="stat">Rate: <b id="info-rate">-</b>/s</div>
+    <div class="stat" id="info-level-row">Level: <b id="info-level">1</b></div>
+    <button class="action-btn" id="upgrade-btn" onclick="doUpgrade()">Upgrade (0g)</button>
+    <button class="action-btn" id="sell-btn" onclick="doSell()">Sell (+0g)</button>
+  </div>
+  <div id="msg"></div>
+  <button id="wave-btn" onclick="startWave()">Start Wave 1</button>
+</div>
+
+<script>
+const CELL = 60, COLS = 13, ROWS = 9;
+const PATH = [[0,4],[1,4],[2,4],[3,4],[3,2],[5,2],[5,6],[8,6],[8,3],[10,3],[10,7],[12,7],[12,4]];
+const PATH_SET = new Set(PATH.map(([c,r])=>`${c},${r}`));
+
+const DEFS = {
+  basic:  { cost:75,  dmg:[10,18],  range:[90,115],  rate:[1.2,1.6], splash:0, color:'#4fc3f7', label:'Basic'  },
+  sniper: { cost:150, dmg:[50,80],  range:[200,260],  rate:[0.5,0.7], splash:0, color:'#ce93d8', label:'Sniper' },
+  splash: { cost:125, dmg:[18,28],  range:[100,120],  rate:[0.9,1.1], splash:70, color:'#ffb74d', label:'Splash' },
+};
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+const G = {
+  gold:150, lives:20, wave:0, score:0,
+  phase:'prep',
+  towers:[], enemies:[], flashes:[],
+  spawnQueue:[], spawnTimer:0,
+  selectedType: null,
+  selectedTower: null,
+  hoveredCell: null,
+  eid: 0,
+};
+
+function cellCenter(c, r){ return { x: c*CELL+CELL/2, y: r*CELL+CELL/2 }; }
+
+function buildWave(n){
+  const count = 5 + n*3;
+  const hp    = Math.round(40 * Math.pow(1.28, n-1));
+  const speed = 55 + n*5;
+  const reward= 8 + n*2;
+  const q = [];
+  for(let i=0;i<count;i++) q.push({hp, speed, reward, delay: i*0.75});
+  return q;
+}
+
+function spawnEnemy(def){
+  const [sc,sr] = PATH[0];
+  G.enemies.push({
+    id: G.eid++, hp:def.hp, maxHp:def.hp,
+    speed:def.speed, reward:def.reward,
+    pathIndex:0, t:0,
+    x: sc*CELL+CELL/2, y: sr*CELL+CELL/2,
+  });
+}
+
+function moveEnemy(e, dt){
+  if(e.pathIndex >= PATH.length-1){ return true; }
+  const [tc,tr] = PATH[e.pathIndex+1];
+  const tx=tc*CELL+CELL/2, ty=tr*CELL+CELL/2;
+  const dx=tx-e.x, dy=ty-e.y, dist=Math.hypot(dx,dy);
+  const step = e.speed*dt;
+  if(step >= dist){
+    e.x=tx; e.y=ty; e.pathIndex++;
+    e.t=0;
+    if(e.pathIndex >= PATH.length-1) return true;
+  } else {
+    e.x += dx/dist*step; e.y += dy/dist*step;
+    const [nc,nr]=PATH[e.pathIndex], [nc2,nr2]=PATH[e.pathIndex+1];
+    const segLen=Math.hypot((nc2-nc)*CELL,(nr2-nr)*CELL);
+    e.t = Math.min(1, step/segLen + e.t);
+  }
+  return false;
+}
+
+function bestTarget(tower){
+  const def=DEFS[tower.type], range=def.range[tower.level];
+  let best=null, bestProg=-1;
+  for(const e of G.enemies){
+    if(Math.hypot(e.x-tower.x,e.y-tower.y)<=range){
+      const prog=e.pathIndex+e.t;
+      if(prog>bestProg){ best=e; bestProg=prog; }
+    }
+  }
+  return best;
+}
+
+function fireTower(tower){
+  const def=DEFS[tower.type];
+  const target=bestTarget(tower);
+  if(!target) return;
+  const dmg=def.dmg[tower.level];
+  G.flashes.push({x1:tower.x,y1:tower.y,x2:target.x,y2:target.y,ttl:0.12,color:def.color});
+  if(def.splash>0){
+    const sr=def.splash;
+    for(const e of G.enemies){
+      if(Math.hypot(e.x-target.x,e.y-target.y)<=sr) e.hp-=dmg;
+    }
+  } else {
+    target.hp-=dmg;
+  }
+}
+
+function update(dt){
+  if(G.phase==='gameover') return;
+
+  // spawn
+  if(G.spawnQueue.length>0){
+    G.spawnTimer-=dt;
+    if(G.spawnTimer<=0){
+      spawnEnemy(G.spawnQueue.shift());
+      G.spawnTimer = G.spawnQueue.length>0 ? (G.spawnQueue[0].delay - (G.wave>0 ? (5+G.wave*3 - G.spawnQueue.length - 1)*0.75 : 0)) : 0;
+      G.spawnTimer = 0.75;
+    }
+  }
+
+  // move
+  const escaped=[];
+  for(const e of G.enemies){
+    if(moveEnemy(e,dt)) escaped.push(e.id);
+  }
+  if(escaped.length){
+    G.lives -= escaped.length;
+    G.enemies = G.enemies.filter(e=>!escaped.includes(e.id));
+    if(G.lives<=0){ G.lives=0; G.phase='gameover'; updateUI(); return; }
+  }
+
+  // towers
+  for(const t of G.towers){
+    t.cooldown-=dt;
+    if(t.cooldown<=0){
+      const def=DEFS[t.type];
+      const rate=def.rate[t.level];
+      if(G.enemies.length>0) fireTower(t);
+      t.cooldown=1/rate;
+    }
+  }
+
+  // remove dead
+  const dead=G.enemies.filter(e=>e.hp<=0);
+  for(const e of dead){ G.gold+=e.reward; G.score+=e.reward*10; }
+  G.enemies=G.enemies.filter(e=>e.hp>0);
+
+  // flashes
+  G.flashes=G.flashes.filter(f=>{ f.ttl-=dt; return f.ttl>0; });
+
+  // wave end
+  if(G.phase==='wave' && G.spawnQueue.length===0 && G.enemies.length===0){
+    G.phase='prep';
+    document.getElementById('wave-btn').disabled=false;
+    document.getElementById('wave-btn').textContent=`Start Wave ${G.wave+1}`;
+  }
+
+  updateUI();
+}
+
+function startWave(){
+  if(G.phase!=='prep') return;
+  G.wave++;
+  G.phase='wave';
+  G.spawnQueue=buildWave(G.wave);
+  G.spawnTimer=0;
+  document.getElementById('wave-btn').disabled=true;
+  document.getElementById('wave-btn').textContent='Wave in progress...';
+}
+
+function selectType(type){
+  G.selectedType = G.selectedType===type ? null : type;
+  G.selectedTower = null;
+  refreshPalette();
+  hideInfo();
+}
+
+function refreshPalette(){
+  ['basic','sniper','splash'].forEach(t=>{
+    document.getElementById('btn-'+t).classList.toggle('active', G.selectedType===t);
+  });
+}
+
+function hideInfo(){ document.getElementById('info-panel').style.display='none'; }
+
+function showTowerInfo(tower){
+  const def=DEFS[tower.type];
+  document.getElementById('info-panel').style.display='block';
+  document.getElementById('info-name').textContent=def.label+' Tower';
+  document.getElementById('info-dmg').textContent=def.dmg[tower.level];
+  document.getElementById('info-range').textContent=def.range[tower.level];
+  document.getElementById('info-rate').textContent=def.rate[tower.level].toFixed(1);
+  document.getElementById('info-level').textContent=tower.level===0?'1':'2 (MAX)';
+  const upgCost=Math.floor(def.cost*0.6);
+  const upgBtn=document.getElementById('upgrade-btn');
+  if(tower.level>=1){ upgBtn.disabled=true; upgBtn.textContent='Fully Upgraded'; }
+  else { upgBtn.disabled=G.gold<upgCost; upgBtn.textContent=`Upgrade (${upgCost}g)`; }
+  const sellVal=Math.floor(def.cost*0.5 + (tower.level===1?Math.floor(def.cost*0.3):0));
+  document.getElementById('sell-btn').textContent=`Sell (+${sellVal}g)`;
+}
+
+function doUpgrade(){
+  const t=G.selectedTower;
+  if(!t||t.level>=1) return;
+  const cost=Math.floor(DEFS[t.type].cost*0.6);
+  if(G.gold<cost){ setMsg('Not enough gold!'); return; }
+  G.gold-=cost; t.level=1;
+  showTowerInfo(t);
+  setMsg('');
+}
+
+function doSell(){
+  const t=G.selectedTower;
+  if(!t) return;
+  const def=DEFS[t.type];
+  const val=Math.floor(def.cost*0.5+(t.level===1?Math.floor(def.cost*0.3):0));
+  G.gold+=val;
+  G.towers=G.towers.filter(x=>x!==t);
+  G.selectedTower=null;
+  hideInfo();
+  setMsg('');
+}
+
+function setMsg(m){ document.getElementById('msg').textContent=m; }
+
+function updateUI(){
+  document.getElementById('b-wave').textContent=G.wave;
+  document.getElementById('b-gold').textContent=G.gold;
+  document.getElementById('b-lives').textContent=G.lives;
+  document.getElementById('b-score').textContent=G.score;
+  if(G.selectedTower) showTowerInfo(G.selectedTower);
+}
+
+// --- Rendering ---
+function render(){
+  ctx.clearRect(0,0,780,540);
+
+  // grid
+  for(let r=0;r<ROWS;r++){
+    for(let c=0;c<COLS;c++){
+      const onPath=PATH_SET.has(`${c},${r}`);
+      ctx.fillStyle=onPath?'#2a3d2a':'#1a2636';
+      ctx.fillRect(c*CELL,r*CELL,CELL,CELL);
+      ctx.strokeStyle='#0f1923';
+      ctx.strokeRect(c*CELL,r*CELL,CELL,CELL);
+    }
+  }
+
+  // path arrows
+  for(let i=0;i<PATH.length-1;i++){
+    const [c1,r1]=PATH[i], [c2,r2]=PATH[i+1];
+    const x1=c1*CELL+CELL/2, y1=r1*CELL+CELL/2;
+    const x2=c2*CELL+CELL/2, y2=r2*CELL+CELL/2;
+    const mx=(x1+x2)/2, my=(y1+y2)/2;
+    const angle=Math.atan2(y2-y1,x2-x1);
+    ctx.save();
+    ctx.translate(mx,my);
+    ctx.rotate(angle);
+    ctx.fillStyle='rgba(255,255,255,0.08)';
+    ctx.beginPath();
+    ctx.moveTo(8,0); ctx.lineTo(-4,-4); ctx.lineTo(-4,4);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  // range preview for selected type (hover) or selected tower
+  if(G.hoveredCell && G.selectedType){
+    const def=DEFS[G.selectedType];
+    const [hc,hr]=G.hoveredCell;
+    const cx=hc*CELL+CELL/2, cy=hr*CELL+CELL/2;
+    ctx.beginPath();
+    ctx.arc(cx,cy,def.range[0],0,Math.PI*2);
+    ctx.fillStyle='rgba(255,255,255,0.04)';
+    ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,0.15)';
+    ctx.lineWidth=1; ctx.stroke();
+  }
+  if(G.selectedTower){
+    const t=G.selectedTower;
+    const def=DEFS[t.type];
+    ctx.beginPath();
+    ctx.arc(t.x,t.y,def.range[t.level],0,Math.PI*2);
+    ctx.fillStyle='rgba(255,255,255,0.05)';
+    ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,0.2)';
+    ctx.lineWidth=1; ctx.stroke();
+  }
+
+  // placement ghost
+  if(G.hoveredCell && G.selectedType){
+    const [hc,hr]=G.hoveredCell;
+    const valid=!PATH_SET.has(`${hc},${hr}`) && !G.towers.find(t=>t.col===hc&&t.row===hr);
+    ctx.fillStyle=valid?'rgba(255,255,255,0.12)':'rgba(255,80,80,0.12)';
+    ctx.fillRect(hc*CELL+2,hr*CELL+2,CELL-4,CELL-4);
+  }
+
+  // flashes
+  for(const f of G.flashes){
+    const alpha=f.ttl/0.12;
+    ctx.strokeStyle=f.color+(Math.round(alpha*255).toString(16).padStart(2,'0'));
+    ctx.lineWidth=f.color==='#ce93d8'?2:1.5;
+    ctx.beginPath(); ctx.moveTo(f.x1,f.y1); ctx.lineTo(f.x2,f.y2); ctx.stroke();
+  }
+
+  // towers
+  for(const t of G.towers){
+    const def=DEFS[t.type];
+    const isSelected=t===G.selectedTower;
+    ctx.fillStyle=isSelected?'#fff':def.color;
+    roundRect(ctx, t.x-14,t.y-14,28,28,5);
+    ctx.fillStyle=def.color;
+    roundRect(ctx, t.x-10,t.y-10,20,20,4);
+    if(t.level===1){
+      ctx.fillStyle='#fff';
+      ctx.beginPath(); ctx.arc(t.x+8,t.y-8,3,0,Math.PI*2); ctx.fill();
+    }
+  }
+
+  // enemies
+  for(const e of G.enemies){
+    const r=12;
+    // shadow
+    ctx.fillStyle='rgba(0,0,0,0.3)';
+    ctx.beginPath(); ctx.ellipse(e.x,e.y+r+2,r*0.7,4,0,0,Math.PI*2); ctx.fill();
+    // body
+    ctx.fillStyle='#e53935';
+    ctx.beginPath(); ctx.arc(e.x,e.y,r,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#ff6659'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.arc(e.x,e.y,r,0,Math.PI*2); ctx.stroke();
+    // hp bar
+    const bw=26, bh=3;
+    const bx=e.x-bw/2, by=e.y-r-7;
+    ctx.fillStyle='#333';
+    ctx.fillRect(bx,by,bw,bh);
+    ctx.fillStyle=e.hp/e.maxHp>0.5?'#66bb6a':'#ffa726';
+    ctx.fillRect(bx,by,bw*(e.hp/e.maxHp),bh);
+  }
+
+  // gameover overlay
+  if(G.phase==='gameover'){
+    ctx.fillStyle='rgba(0,0,0,0.7)';
+    ctx.fillRect(0,0,780,540);
+    ctx.fillStyle='#ef5350';
+    ctx.font='bold 48px monospace';
+    ctx.textAlign='center';
+    ctx.fillText('GAME OVER',390,250);
+    ctx.fillStyle='#90caf9';
+    ctx.font='20px monospace';
+    ctx.fillText(`Score: ${G.score}   Wave: ${G.wave}`,390,295);
+    ctx.fillStyle='#78909c';
+    ctx.font='14px monospace';
+    ctx.fillText('Refresh to play again',390,330);
+    ctx.textAlign='left';
+  }
+}
+
+function roundRect(ctx,x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.lineTo(x+w-r,y); ctx.arcTo(x+w,y,x+w,y+r,r);
+  ctx.lineTo(x+w,y+h-r); ctx.arcTo(x+w,y+h,x+w-r,y+h,r);
+  ctx.lineTo(x+r,y+h); ctx.arcTo(x,y+h,x,y+h-r,r);
+  ctx.lineTo(x,y+r); ctx.arcTo(x,y,x+r,y,r);
+  ctx.closePath(); ctx.fill();
+}
+
+// --- Input ---
+canvas.addEventListener('mousemove', e=>{
+  const rect=canvas.getBoundingClientRect();
+  const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  const c=Math.floor(mx/CELL), r=Math.floor(my/CELL);
+  G.hoveredCell=(c>=0&&c<COLS&&r>=0&&r<ROWS)?[c,r]:null;
+});
+
+canvas.addEventListener('mouseleave',()=>{ G.hoveredCell=null; });
+
+canvas.addEventListener('click', e=>{
+  const rect=canvas.getBoundingClientRect();
+  const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  const c=Math.floor(mx/CELL), r=Math.floor(my/CELL);
+  if(c<0||c>=COLS||r<0||r>=ROWS) return;
+
+  if(G.phase==='gameover') return;
+
+  if(G.selectedType){
+    // place tower
+    if(PATH_SET.has(`${c},${r}`)){ setMsg('Cannot build on path!'); return; }
+    if(G.towers.find(t=>t.col===c&&t.row===r)){ setMsg('Cell occupied!'); return; }
+    const def=DEFS[G.selectedType];
+    if(G.gold<def.cost){ setMsg('Not enough gold!'); return; }
+    G.gold-=def.cost;
+    const {x,y}=cellCenter(c,r);
+    G.towers.push({type:G.selectedType,col:c,row:r,x,y,level:0,cooldown:0});
+    setMsg('');
+    // deselect after place
+    G.selectedType=null;
+    refreshPalette();
+  } else {
+    // select existing tower
+    const hit=G.towers.find(t=>t.col===c&&t.row===r);
+    if(hit){
+      G.selectedTower = G.selectedTower===hit ? null : hit;
+      if(G.selectedTower) showTowerInfo(G.selectedTower);
+      else hideInfo();
+    } else {
+      G.selectedTower=null;
+      hideInfo();
+    }
+  }
+});
+
+canvas.addEventListener('contextmenu', e=>{ e.preventDefault(); G.selectedType=null; G.selectedTower=null; refreshPalette(); hideInfo(); });
+
+// --- Loop ---
+let last=null;
+function loop(ts){
+  if(!last) last=ts;
+  const dt=Math.min((ts-last)/1000, 0.1);
+  last=ts;
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
