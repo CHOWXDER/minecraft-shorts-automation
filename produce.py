@@ -63,56 +63,47 @@ print(f"Story: {title}")
 
 # ── AUDIO + WORD-TIMED SUBTITLES ──────────────────────────────────────────────
 
-async def _generate(text: str) -> str:
-    """Stream TTS audio to disk and collect word-boundary timing as VTT."""
+async def _generate(text: str) -> list[tuple[float, float, str]]:
+    """
+    Stream TTS audio to disk and return word-boundary cues as
+    (start_sec, end_sec, word) tuples.
+
+    WordBoundary offsets from edge_tts are in 100-nanosecond ticks.
+    Avoids SubMaker entirely — works across all edge_tts versions.
+    """
     communicate = edge_tts.Communicate(text, VOICE)
-    sub_maker   = edge_tts.SubMaker()
+    cues: list[tuple[float, float, str]] = []
 
     with open("temp/voiceover.mp3", "wb") as f:
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
                 f.write(chunk["data"])
             elif chunk["type"] == "WordBoundary":
-                sub_maker.create_sub(
-                    (chunk["offset"], chunk["duration"]), chunk["text"]
-                )
+                start = chunk["offset"] / 10_000_000          # ticks → seconds
+                end   = (chunk["offset"] + chunk["duration"]) / 10_000_000
+                cues.append((start, end, chunk["text"]))
 
-    return sub_maker.generate_subs()   # returns VTT string
-
-
-def _vtt_time_to_srt(t: str) -> str:
-    """00:00:00.000  →  00:00:00,000"""
-    return t.replace(".", ",")
+    return cues
 
 
-def _build_srt(vtt: str) -> str:
-    """
-    Parse word-level VTT from edge_tts and emit N-word SRT chunks.
-    Text is uppercased for visual impact.
-    Returns empty string if VTT has no cues.
-    """
-    cues: list[tuple[str, str, str]] = []   # (start, end, word)
+def _fmt_srt_time(secs: float) -> str:
+    h  = int(secs // 3600)
+    m  = int((secs % 3600) // 60)
+    s  = int(secs % 60)
+    ms = int(round((secs % 1) * 1000))
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
-    for block in re.split(r"\n\n+", vtt.strip()):
-        lines  = [l.strip() for l in block.strip().splitlines() if l.strip()]
-        timing = next((l for l in lines if "-->" in l), None)
-        if not timing:
-            continue
-        start, end = [t.strip() for t in timing.split("-->")]
-        words = " ".join(
-            l for l in lines if "-->" not in l and l.lower() != "webvtt"
-        )
-        if words:
-            cues.append((start, end, words))
 
+def _build_srt(cues: list[tuple[float, float, str]]) -> str:
+    """Group word cues into N-word SRT chunks, uppercased for impact."""
     if not cues:
         return ""
 
     blocks = []
     for i in range(0, len(cues), WORDS_PER_SUB):
         chunk = cues[i : i + WORDS_PER_SUB]
-        start = _vtt_time_to_srt(chunk[0][0])
-        end   = _vtt_time_to_srt(chunk[-1][1])
+        start = _fmt_srt_time(chunk[0][0])
+        end   = _fmt_srt_time(chunk[-1][1])
         text  = " ".join(c[2] for c in chunk).upper()
         blocks.append(f"{i // WORDS_PER_SUB + 1}\n{start} --> {end}\n{text}\n")
 
@@ -120,8 +111,8 @@ def _build_srt(vtt: str) -> str:
 
 
 print("Generating voiceover + subtitles…")
-vtt = asyncio.run(_generate(full_text))
-srt = _build_srt(vtt)
+cues = asyncio.run(_generate(full_text))
+srt  = _build_srt(cues)
 
 if srt:
     with open("temp/subtitles.srt", "w", encoding="utf-8") as f:
