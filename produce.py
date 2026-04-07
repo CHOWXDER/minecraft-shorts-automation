@@ -114,16 +114,6 @@ print("Generating voiceover + subtitles…")
 cues = asyncio.run(_generate(full_text))
 srt  = _build_srt(cues)
 
-if srt:
-    with open("temp/subtitles.srt", "w", encoding="utf-8") as f:
-        f.write(srt)
-    print(f"  {srt.count('-->')} subtitle cues written")
-    has_subs = True
-else:
-    print("  [warn] No subtitle timing data — rendering without subtitles")
-    has_subs = False
-
-
 # ── AUDIO DURATION ────────────────────────────────────────────────────────────
 
 probe = subprocess.run(
@@ -136,6 +126,26 @@ if not probe.stdout.strip():
 audio_duration = float(probe.stdout.strip())
 print(f"Audio duration: {audio_duration:.1f}s")
 
+# If edge_tts gave no word boundaries, estimate timing evenly across duration
+if not srt:
+    print("  [info] No word timing from edge_tts — estimating subtitle timing")
+    words = full_text.split()
+    secs_per_word = audio_duration / max(len(words), 1)
+    fake_cues = [
+        (i * secs_per_word, (i + 1) * secs_per_word, w)
+        for i, w in enumerate(words)
+    ]
+    srt = _build_srt(fake_cues)
+
+if srt:
+    with open("temp/subtitles.srt", "w", encoding="utf-8") as f:
+        f.write(srt)
+    print(f"  {srt.count('-->')} subtitle cues written")
+    has_subs = True
+else:
+    print("  [warn] Could not generate subtitles — rendering without")
+    has_subs = False
+
 
 # ── DOWNLOAD ──────────────────────────────────────────────────────────────────
 
@@ -146,8 +156,7 @@ if not os.path.exists("temp/minecraft.mp4"):
             sys.executable, "-m", "yt_dlp",
             "--cookies-from-browser", "firefox",
             "-o", "temp/minecraft.mp4",
-            # prefer a single MP4 file to avoid ffmpeg remux surprises
-            "-f", "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
+            "-f", "bv*+ba/b",  # best video + best audio, any format
             MINECRAFT_URL,
         ],
         check=True,
