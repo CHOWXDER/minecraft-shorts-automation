@@ -145,6 +145,9 @@ class OODALoop:
 # ---------------------------------------------------------------------------
 
 def main():
+    from check_env import validate
+    validate(exit_on_fail=True)
+
     parser = argparse.ArgumentParser(description='Minecraft Shorts OODA Loop')
     parser.add_argument('--daemon',  action='store_true',
                         help=f'Run continuously every {CYCLE_INTERVAL_MINUTES} minutes')

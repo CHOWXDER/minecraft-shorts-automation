@@ -501,4 +501,6 @@ def make_video(
 
 
 if __name__ == "__main__":
+    from check_env import validate
+    validate(exit_on_fail=True)
     Producer(_parse_args()).run()
