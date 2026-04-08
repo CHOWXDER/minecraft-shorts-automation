@@ -336,7 +336,7 @@ class FootageEngine:
 # ── RENDERER ──────────────────────────────────────────────────────────────────
 
 class Renderer:
-    """FFmpeg: crop→scale→burn ASS subs, loudnorm audio, CRF 19."""
+    """FFmpeg: crop→scale→burn ASS subs, loudnorm audio, GPU-accelerated encode."""
 
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -362,6 +362,30 @@ class Renderer:
         except ValueError:
             return str(path.resolve()).replace("\\", "/").replace(":", "\\:")
 
+    @staticmethod
+    def _detect_video_codec() -> str:
+        """
+        Probe for NVIDIA NVENC hardware encoder.
+        Falls back to libx264 (CPU) silently — never crashes.
+        NVENC is ~8x faster and frees CPU for Whisper.
+        """
+        try:
+            subprocess.run(
+                ["ffmpeg", "-hide_banner", "-encoders"],
+                capture_output=True, check=True,
+            )
+            # Quick encode test with null output
+            subprocess.run(
+                ["ffmpeg", "-f", "lavfi", "-i", "nullsrc=s=64x64:d=0.1",
+                 "-c:v", "h264_nvenc", "-f", "null", "-"],
+                capture_output=True, check=True,
+            )
+            print("  [Render] GPU detected → using h264_nvenc")
+            return "h264_nvenc"
+        except Exception:
+            print("  [Render] No GPU → using libx264")
+            return "libx264"
+
     def render(self, footage: Path, audio: Path, subs: Path, output: Path) -> None:
         audio_dur  = self._probe_duration(audio)
         mc_dur     = self._probe_duration(footage)
@@ -369,27 +393,53 @@ class Renderer:
         max_start  = max(avoid, mc_dur - audio_dur - avoid)
         start_time = random.uniform(avoid, max_start)
 
+        codec    = self._detect_video_codec()
         sub_path = self._safe_path(subs)
+
+        # NVENC uses -rc vbr + -cq instead of -crf
+        if codec == "h264_nvenc":
+            codec_flags = ["-c:v", "h264_nvenc", "-rc", "vbr", "-cq", "19",
+                           "-preset", "p4", "-b:v", "0"]
+        else:
+            codec_flags = ["-c:v", "libx264", "-crf", "19", "-preset", "medium"]
+
         vf = f"[0:v]crop=ih*9/16:ih,scale=1080:1920,ass={sub_path}[vout]"
         af = "[1:a]loudnorm=I=-14:LRA=11:TP=-1.5[a]"
 
-        print(f"  [Render] clip {start_time:.1f}s → {start_time + audio_dur:.1f}s")
-        subprocess.run(
-            [
-                "ffmpeg", "-y",
-                "-ss", str(start_time), "-t", str(audio_dur + 1),
-                "-i", str(footage),
-                "-i", str(audio),
-                "-filter_complex", f"{vf};{af}",
-                "-map", "[vout]", "-map", "[a]",
-                "-c:v", "libx264", "-crf", "19", "-preset", "medium",
-                "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-b:a", "192k", "-ar", "44100",
-                "-shortest",
-                str(output),
-            ],
-            check=True,
-        )
+        print(f"  [Render] clip {start_time:.1f}s → {start_time + audio_dur:.1f}s  codec={codec}")
+        try:
+            subprocess.run(
+                [
+                    "ffmpeg", "-y",
+                    "-ss", str(start_time), "-t", str(audio_dur + 1),
+                    "-i", str(footage),
+                    "-i", str(audio),
+                    "-filter_complex", f"{vf};{af}",
+                    "-map", "[vout]", "-map", "[a]",
+                    *codec_flags,
+                    "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", "-b:a", "192k", "-ar", "44100",
+                    "-shortest",
+                    str(output),
+                ],
+                check=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or b"").decode(errors="replace").strip()
+            # Surface the most relevant FFmpeg error line
+            relevant = next(
+                (ln for ln in reversed(stderr.splitlines()) if ln.strip()),
+                stderr[-300:] if stderr else "no stderr captured",
+            )
+            raise RuntimeError(
+                f"FFmpeg render failed (exit {exc.returncode}).\n"
+                f"  Codec   : {codec}\n"
+                f"  Sub path: {sub_path}\n"
+                f"  Error   : {relevant}\n"
+                f"  Full log: run ffmpeg manually to see full output"
+            ) from exc
+
         print(f"\n  Done! → {output}")
 
 

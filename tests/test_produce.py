@@ -3,7 +3,8 @@ TDD test suite for produce.py
 RED → GREEN → REFACTOR
 
 Covers: SubtitleEngine, TTSEngine cache, Renderer path safety,
-        WordCue integrity, Config defaults, emoji injection.
+        WordCue integrity, Config defaults, emoji injection,
+        GPU codec detection, fail-fast render error logging.
 """
 
 import hashlib
@@ -311,6 +312,62 @@ class TestSafePath:
 # ══════════════════════════════════════════════════════════════════════════════
 # make_video() — integration smoke test (mocked)
 # ══════════════════════════════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Renderer — GPU codec detection
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestGpuDetection:
+    def test_returns_nvenc_when_available(self, monkeypatch):
+        monkeypatch.setattr("subprocess.run", lambda *a, **k: type("R", (), {"returncode": 0})())
+        cfg = Config("s", "t", "v", "u", "o")
+        codec = Renderer(cfg)._detect_video_codec()
+        assert codec == "h264_nvenc"
+
+    def test_falls_back_to_libx264_on_failure(self, monkeypatch):
+        monkeypatch.setattr(
+            "subprocess.run",
+            lambda *a, **k: (_ for _ in ()).throw(Exception("no gpu")),
+        )
+        cfg = Config("s", "t", "v", "u", "o")
+        codec = Renderer(cfg)._detect_video_codec()
+        assert codec == "libx264"
+
+    def test_codec_is_string(self, monkeypatch):
+        monkeypatch.setattr("subprocess.run", lambda *a, **k: type("R", (), {"returncode": 0})())
+        cfg = Config("s", "t", "v", "u", "o")
+        assert isinstance(Renderer(cfg)._detect_video_codec(), str)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Renderer — fail-fast render error
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestRenderFailFast:
+    def test_render_error_includes_ffmpeg_stderr(self, tmp_path, monkeypatch):
+        import subprocess
+        monkeypatch.chdir(tmp_path)
+        cfg = Config("s", "t", "v", "u", "o")
+        r = Renderer(cfg)
+
+        dummy_footage = tmp_path / "footage.mp4"
+        dummy_audio   = tmp_path / "audio.mp3"
+        dummy_subs    = tmp_path / "subs.ass"
+        dummy_out     = tmp_path / "out.mp4"
+        for f in [dummy_footage, dummy_audio, dummy_subs]:
+            f.write_bytes(b"fake")
+
+        def fake_probe(path):
+            return 120.0
+        monkeypatch.setattr(r, "_probe_duration", fake_probe)
+
+        err = subprocess.CalledProcessError(1, ["ffmpeg"])
+        err.stderr = b"[ass filter] Unable to parse path"
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(err))
+
+        with pytest.raises(RuntimeError, match="FFmpeg render failed"):
+            r.render(dummy_footage, dummy_audio, dummy_subs, dummy_out)
+
 
 class TestMakeVideoSmoke:
     def test_returns_output_path(self, tmp_path, monkeypatch):
