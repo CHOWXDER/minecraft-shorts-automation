@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 produce.py — Elite Shorts Production Pipeline
-ElevenLabs TTS → (edge_tts fallback) → Whisper caption sync →
+edge_tts (free, local) → Whisper caption sync →
 animated ASS subtitles → FFmpeg render.
+
+100% free and local by default. No API keys required.
+Optional: set ELEVENLABS_API_KEY to use premium voice instead.
 
 Zero config needed to run standalone:
     py produce.py
-
-The pipeline never hard-exits on TTS failure — it falls back to
-edge_tts automatically so a video always gets produced.
 """
 
 import argparse

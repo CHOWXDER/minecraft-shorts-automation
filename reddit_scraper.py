@@ -1,60 +1,80 @@
-import os
-import praw
-from dotenv import load_dotenv
+"""
+reddit_scraper.py — Anonymous Reddit JSON scraping. No API key required.
 
-load_dotenv()
+Uses Reddit's public .json endpoint — zero accounts, zero credentials.
+Rate-limited to ~1 req/sec to be polite.
+"""
+
+import time
+import requests
+
+_HEADERS = {"User-Agent": "MinecraftShortsBot/1.0 (local automation)"}
+_DELAY   = 1.1  # seconds between requests (Reddit rate limit: ~60/min)
 
 
 class RedditScraper:
     def __init__(self):
-        self.reddit = praw.Reddit(
-            client_id=os.getenv('REDDIT_CLIENT_ID'),
-            client_secret=os.getenv('REDDIT_CLIENT_SECRET'),
-            user_agent=os.getenv('REDDIT_USER_AGENT', 'MinecraftShortsBot/1.0'),
-        )
+        self._session = requests.Session()
+        self._session.headers.update(_HEADERS)
 
-    def get_top_posts(self, subreddit_name: str, limit: int = 20, time_filter: str = 'day') -> list[dict]:
-        subreddit = self.reddit.subreddit(subreddit_name)
-        posts = subreddit.top(time_filter=time_filter, limit=limit)
+    def get_top_posts(
+        self,
+        subreddit_name: str,
+        limit: int = 25,
+        time_filter: str = "day",
+    ) -> list[dict]:
+        url = (
+            f"https://www.reddit.com/r/{subreddit_name}/top.json"
+            f"?t={time_filter}&limit={limit}"
+        )
+        try:
+            resp = self._session.get(url, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as exc:
+            print(f"[RedditScraper] Failed to fetch r/{subreddit_name}: {exc}")
+            return []
 
         results = []
-        for post in posts:
+        for child in data.get("data", {}).get("children", []):
+            p = child.get("data", {})
             results.append({
-                'title': post.title,
-                'selftext': post.selftext,
-                'score': post.score,
-                'num_comments': post.num_comments,
-                'url': post.url,
-                'author': post.author.name if post.author else 'Deleted',
-                'created_utc': post.created_utc,
-                'subreddit': post.subreddit.display_name,
-                'upvote_ratio': post.upvote_ratio,
-                'is_self': post.is_self,
+                "title":         p.get("title", ""),
+                "selftext":      p.get("selftext", ""),
+                "score":         p.get("score", 0),
+                "num_comments":  p.get("num_comments", 0),
+                "url":           p.get("url", ""),
+                "author":        p.get("author", "Deleted"),
+                "created_utc":   p.get("created_utc", 0.0),
+                "subreddit":     p.get("subreddit", subreddit_name),
+                "upvote_ratio":  p.get("upvote_ratio", 0.0),
+                "is_self":       p.get("is_self", False),
             })
+
+        time.sleep(_DELAY)
         return results
 
     def filter_quality_posts(self, posts: list[dict], min_score: int = 500) -> list[dict]:
-        return [p for p in posts if p['score'] >= min_score]
+        return [p for p in posts if p["score"] >= min_score]
 
     def get_minecraft_stories(self) -> list[dict]:
-        subreddits = ['Minecraft', 'MinecraftStories', 'mcservers']
+        subreddits = ["Minecraft", "MinecraftStories", "mcservers"]
         all_posts: list[dict] = []
 
         for sub in subreddits:
-            try:
-                posts = self.get_top_posts(sub, limit=20)
-                all_posts.extend(posts)
-            except Exception as exc:
-                print(f'[RedditScraper] Error fetching from {sub}: {exc}')
+            posts = self.get_top_posts(sub, limit=25)
+            all_posts.extend(posts)
+            print(f"[RedditScraper] r/{sub}: {len(posts)} posts fetched")
 
-        return self.filter_quality_posts(all_posts)
+        filtered = self.filter_quality_posts(all_posts)
+        print(f"[RedditScraper] {len(filtered)}/{len(all_posts)} posts passed quality filter")
+        return filtered
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     scraper = RedditScraper()
-    posts = scraper.get_minecraft_stories()
-    for post in posts:
+    posts   = scraper.get_minecraft_stories()
+    for post in posts[:5]:
         print(f"Title: {post['title']}")
         print(f"Score: {post['score']}  Comments: {post['num_comments']}")
-        print(f"Author: {post['author']}")
-        print('---')
+        print("---")
