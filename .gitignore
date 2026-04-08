@@ -2,3 +2,14 @@
 .env
 *.key
 *.secret
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Test cache
+.pytest_cache/
+
+# YouTube OAuth token (contains credentials)
+youtube_token.pickle
