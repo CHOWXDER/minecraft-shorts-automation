@@ -328,8 +328,17 @@ class Renderer:
 
     @staticmethod
     def _safe_path(path: Path) -> str:
-        """Escape path for FFmpeg ASS filter (Windows backslash + colon)."""
-        return str(path.resolve()).replace("\\", "/").replace(":", "\\:")
+        """
+        Return an FFmpeg-safe path for the ASS filter.
+        Prefer a relative path — it has no drive-letter colon, which newer
+        FFmpeg (8.x) misparses as an option separator.
+        """
+        try:
+            rel = path.resolve().relative_to(Path.cwd())
+            return str(rel).replace("\\", "/")
+        except ValueError:
+            # File is outside cwd — fall back to absolute with colon escaped
+            return str(path.resolve()).replace("\\", "/").replace(":", "\\:")
 
     def render(self, footage: Path, audio: Path, subs: Path, output: Path) -> None:
         audio_dur  = self._probe_duration(audio)
