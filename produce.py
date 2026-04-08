@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """
 produce.py — Elite Shorts Production Pipeline
-Features: ElevenLabs TTS + Whisper caption sync, parallel workers,
-          hash caching, 4 animation styles, loudnorm, emoji injection, CLI
+ElevenLabs TTS → (edge_tts fallback) → Whisper caption sync →
+animated ASS subtitles → FFmpeg render.
 
-Whisper runs 100% locally after ElevenLabs generates the audio — free,
-offline, word-level accuracy with zero per-character alignment fiddling.
+Zero config needed to run standalone:
+    py produce.py
+
+The pipeline never hard-exits on TTS failure — it falls back to
+edge_tts automatically so a video always gets produced.
 """
 
 import argparse
+import asyncio
 import base64
 import hashlib
 import os
@@ -22,7 +26,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
-from elevenlabs.client import ElevenLabs
 
 load_dotenv()
 
@@ -77,7 +80,6 @@ EMOJI_MAP = {
 
 ANIMATIONS = ["pop", "bounce", "zoom", "slam"]
 
-
 # ── DATA CLASSES ──────────────────────────────────────────────────────────────
 
 @dataclass
@@ -103,46 +105,77 @@ class Config:
 # ── TTS ENGINE ────────────────────────────────────────────────────────────────
 
 class TTSEngine:
-    """ElevenLabs TTS with MD5-based disk cache and exponential-backoff retry."""
+    """
+    ElevenLabs TTS with MD5 cache and exponential-backoff retry.
+    If ElevenLabs fails (bad key, quota, network) → auto-fallback to edge_tts.
+    Whisper will sync captions against whichever audio was produced.
+    """
+
+    FALLBACK_VOICE = "en-US-ChristopherNeural"  # edge_tts fallback
 
     def __init__(self, api_key: str, voice_id: str):
-        self.client   = ElevenLabs(api_key=api_key)
+        self.api_key  = api_key
         self.voice_id = voice_id
 
     def _cache_key(self, text: str) -> str:
         return hashlib.md5(f"{text}:{self.voice_id}:v3".encode()).hexdigest()
 
     def generate(self, text: str, audio_path: Path) -> None:
-        """Generate TTS audio, using cache when available."""
         CACHE.mkdir(parents=True, exist_ok=True)
         key       = self._cache_key(text)
         cache_mp3 = CACHE / f"{key}.mp3"
 
         if cache_mp3.exists():
-            print("  [TTS] cache hit — copying audio")
+            print("  [TTS] cache hit")
             shutil.copy(cache_mp3, audio_path)
             return
 
-        print("  [TTS] calling ElevenLabs…")
-        for attempt in range(3):
-            try:
-                response = self.client.text_to_speech.convert_with_timestamps(
-                    voice_id=self.voice_id,
-                    text=text,
-                    model_id="eleven_multilingual_v2",
-                    output_format="mp3_44100_128",
-                )
-                audio_bytes = base64.b64decode(response.audio_base_64)
-                audio_path.write_bytes(audio_bytes)
-                cache_mp3.write_bytes(audio_bytes)
-                print("  [TTS] audio written")
-                return
-            except Exception as exc:
-                wait = 2 ** attempt
-                print(f"  [TTS] attempt {attempt + 1} failed: {exc} — retrying in {wait}s")
-                time.sleep(wait)
+        # ── Try ElevenLabs ──────────────────────────────────────────────────
+        if self.api_key:
+            print("  [TTS] calling ElevenLabs…")
+            for attempt in range(3):
+                try:
+                    from elevenlabs.client import ElevenLabs
+                    client   = ElevenLabs(api_key=self.api_key)
+                    response = client.text_to_speech.convert_with_timestamps(
+                        voice_id=self.voice_id,
+                        text=text,
+                        model_id="eleven_multilingual_v2",
+                        output_format="mp3_44100_128",
+                    )
+                    audio_bytes = base64.b64decode(response.audio_base_64)
+                    audio_path.write_bytes(audio_bytes)
+                    cache_mp3.write_bytes(audio_bytes)
+                    print("  [TTS] ElevenLabs audio written")
+                    return
+                except Exception as exc:
+                    wait = 2 ** attempt
+                    print(f"  [TTS] attempt {attempt + 1} failed: {exc!s:.120} — retrying in {wait}s")
+                    time.sleep(wait)
+            print("  [TTS] ElevenLabs unavailable — switching to edge_tts fallback")
+        else:
+            print("  [TTS] No ELEVENLABS_API_KEY — using edge_tts fallback")
 
-        sys.exit("[TTS] ElevenLabs failed after 3 attempts")
+        # ── Fallback: edge_tts ───────────────────────────────────────────────
+        self._edge_tts(text, audio_path)
+        shutil.copy(audio_path, cache_mp3)
+
+    def _edge_tts(self, text: str, path: Path) -> None:
+        try:
+            import edge_tts
+        except ImportError:
+            sys.exit(
+                "\n[TTS] edge_tts not installed (and ElevenLabs failed).\n"
+                "Fix:  py -m pip install edge-tts\n"
+            )
+
+        async def _run():
+            comm = edge_tts.Communicate(text, voice=self.FALLBACK_VOICE)
+            await comm.save(str(path))
+
+        print(f"  [TTS] edge_tts → {self.FALLBACK_VOICE}")
+        asyncio.run(_run())
+        print("  [TTS] edge_tts audio written")
 
 
 # ── WHISPER ENGINE ────────────────────────────────────────────────────────────
@@ -150,32 +183,28 @@ class TTSEngine:
 class WhisperEngine:
     """
     Local OpenAI Whisper for perfect word-level caption timing.
-    Free, offline, gold-standard accuracy — no API cost.
-
-    Install once:  py -m pip install openai-whisper
-    Model sizes:   tiny (~1s/min audio) → large (~8x slower, most accurate)
-    'base' is the sweet spot for Shorts (fast + good enough).
+    Free, offline — works with any audio source (ElevenLabs or edge_tts).
+    Install: py -m pip install openai-whisper
     """
 
     def __init__(self, model_name: str = "base"):
         self.model_name = model_name
-        self._model     = None  # lazy-loaded on first use
+        self._model     = None
 
     def _load(self):
         if self._model is None:
             try:
-                import whisper  # noqa: PLC0415
+                import whisper
                 print(f"  [Whisper] loading '{self.model_name}' model…")
                 self._model = whisper.load_model(self.model_name)
             except ImportError:
                 sys.exit(
-                    "\n[Whisper] openai-whisper is not installed.\n"
+                    "\n[Whisper] openai-whisper not installed.\n"
                     "Fix:  py -m pip install openai-whisper\n"
                 )
         return self._model
 
     def transcribe(self, audio_path: Path) -> list[WordCue]:
-        """Return word-level cues from local Whisper transcription."""
         model  = self._load()
         print(f"  [Whisper] transcribing {audio_path.name}…")
         result = model.transcribe(
@@ -200,10 +229,7 @@ class WhisperEngine:
 # ── SUBTITLE ENGINE ───────────────────────────────────────────────────────────
 
 class SubtitleEngine:
-    """
-    Builds an ASS subtitle file from WordCues.
-    Per-card: random animation, cycling colour, emoji injection.
-    """
+    """ASS subtitles: per-card animation, cycling colour, emoji injection."""
 
     ASS_HEADER = """\
 [Script Info]
@@ -261,9 +287,7 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
             end   = self._ass_time(chunk[-1].end)
 
             words = [c.text for c in chunk]
-            # Sentence capitalisation
             words[0] = words[0].capitalize()
-            # Emoji injection
             words = [self._inject_emoji(w) for w in words]
 
             color     = COLORS[color_idx % len(COLORS)]
@@ -329,15 +353,13 @@ class Renderer:
     @staticmethod
     def _safe_path(path: Path) -> str:
         """
-        Return an FFmpeg-safe path for the ASS filter.
-        Prefer a relative path — it has no drive-letter colon, which newer
-        FFmpeg (8.x) misparses as an option separator.
+        Prefer relative path — avoids the C: drive colon that FFmpeg 8.x
+        misparses as an option separator in the ass= filter.
         """
         try:
             rel = path.resolve().relative_to(Path.cwd())
             return str(rel).replace("\\", "/")
         except ValueError:
-            # File is outside cwd — fall back to absolute with colon escaped
             return str(path.resolve()).replace("\\", "/").replace(":", "\\:")
 
     def render(self, footage: Path, audio: Path, subs: Path, output: Path) -> None:
@@ -348,10 +370,7 @@ class Renderer:
         start_time = random.uniform(avoid, max_start)
 
         sub_path = self._safe_path(subs)
-        vf = (
-            f"[0:v]crop=ih*9/16:ih,scale=1080:1920,"
-            f"ass={sub_path}[vout]"
-        )
+        vf = f"[0:v]crop=ih*9/16:ih,scale=1080:1920,ass={sub_path}[vout]"
         af = "[1:a]loudnorm=I=-14:LRA=11:TP=-1.5[a]"
 
         print(f"  [Render] clip {start_time:.1f}s → {start_time + audio_dur:.1f}s")
@@ -380,13 +399,8 @@ class Producer:
     """OODA-phase orchestrator with parallel asset acquisition."""
 
     def __init__(self, cfg: Config):
-        self.cfg = cfg
-        api_key  = os.getenv("ELEVENLABS_API_KEY", "")
-        if not api_key:
-            sys.exit(
-                "ELEVENLABS_API_KEY not set.\n"
-                "Add it to .env  OR  run:  setx ELEVENLABS_API_KEY your_key"
-            )
+        self.cfg      = cfg
+        api_key       = os.getenv("ELEVENLABS_API_KEY", "")
         self.tts      = TTSEngine(api_key, cfg.voice_id)
         self.whisper  = WhisperEngine(cfg.whisper_model)
         self.subs     = SubtitleEngine(cfg.font_size, cfg.words_per_sub)
@@ -400,12 +414,16 @@ class Producer:
     def _tts_job(self, text: str, path: Path, done: threading.Event) -> None:
         try:
             self.tts.generate(text, path)
+        except Exception as exc:
+            print(f"  [TTS] fatal: {exc}")
         finally:
             done.set()
 
     def _dl_job(self, done: threading.Event) -> None:
         try:
             self.footage.ensure()
+        except Exception as exc:
+            print(f"  [Footage] fatal: {exc}")
         finally:
             done.set()
 
@@ -421,14 +439,15 @@ class Producer:
         self._phase("OBSERVE  Acquiring Assets (parallel)")
         tts_done = threading.Event()
         dl_done  = threading.Event()
-        t1 = threading.Thread(
-            target=self._tts_job, args=(full_text, audio_path, tts_done), daemon=True
-        )
-        t2 = threading.Thread(
-            target=self._dl_job, args=(dl_done,), daemon=True
-        )
+        t1 = threading.Thread(target=self._tts_job, args=(full_text, audio_path, tts_done), daemon=True)
+        t2 = threading.Thread(target=self._dl_job,  args=(dl_done,), daemon=True)
         t1.start(); t2.start()
         t1.join();  t2.join()
+
+        if not audio_path.exists():
+            sys.exit("[ERROR] Audio file not produced — check TTS errors above.")
+        if not mc_path.exists():
+            sys.exit("[ERROR] Footage not downloaded — check yt_dlp errors above.")
 
         # ORIENT ── Whisper word-level timing ─────────────────────────────────
         self._phase("ORIENT  Whisper Caption Sync")
@@ -445,35 +464,6 @@ class Producer:
         self.renderer.render(mc_path, audio_path, subs_path, Path(self.cfg.output))
 
 
-# ── ENTRY POINT ───────────────────────────────────────────────────────────────
-
-def _parse_args() -> Config:
-    p = argparse.ArgumentParser(
-        description="Elite Minecraft Shorts Producer with Whisper caption sync"
-    )
-    p.add_argument("--story",         default=DEFAULT_STORY,  help="Story text")
-    p.add_argument("--title",         default=DEFAULT_TITLE,  help="Story title")
-    p.add_argument("--voice",         default=DEFAULT_VOICE,  help="ElevenLabs voice ID")
-    p.add_argument("--url",           default=DEFAULT_URL,    help="Minecraft footage URL")
-    p.add_argument("--output",        default=DEFAULT_OUT,    help="Output file path")
-    p.add_argument("--font-size",     type=int, default=13,   help="ASS font size")
-    p.add_argument("--words",         type=int, default=3,    help="Words per subtitle card")
-    p.add_argument("--whisper-model", default="base",
-                   choices=["tiny", "base", "small", "medium", "large"],
-                   help="Whisper model (larger = slower + more accurate)")
-    args = p.parse_args()
-    return Config(
-        story=args.story,
-        title=args.title,
-        voice_id=args.voice,
-        url=args.url,
-        output=args.output,
-        font_size=args.font_size,
-        words_per_sub=args.words,
-        whisper_model=args.whisper_model,
-    )
-
-
 # ── PROGRAMMATIC ENTRY POINT (used by OODA act.py) ───────────────────────────
 
 def make_video(
@@ -484,23 +474,37 @@ def make_video(
     url: str = DEFAULT_URL,
     whisper_model: str = "base",
 ) -> str:
-    """
-    Callable from other modules — no argparse, no sys.argv.
-    Returns output path on success, raises on failure.
-    """
+    """Callable from other modules — no argparse, no sys.argv."""
     cfg = Config(
-        story=story,
-        title=title,
-        voice_id=voice_id,
-        url=url,
-        output=output,
-        whisper_model=whisper_model,
+        story=story, title=title, voice_id=voice_id,
+        url=url, output=output, whisper_model=whisper_model,
     )
     Producer(cfg).run()
     return output
 
 
+# ── ENTRY POINT ───────────────────────────────────────────────────────────────
+
+def _parse_args() -> Config:
+    p = argparse.ArgumentParser(description="Elite Minecraft Shorts Producer")
+    p.add_argument("--story",         default=DEFAULT_STORY)
+    p.add_argument("--title",         default=DEFAULT_TITLE)
+    p.add_argument("--voice",         default=DEFAULT_VOICE)
+    p.add_argument("--url",           default=DEFAULT_URL)
+    p.add_argument("--output",        default=DEFAULT_OUT)
+    p.add_argument("--font-size",     type=int, default=13)
+    p.add_argument("--words",         type=int, default=3)
+    p.add_argument("--whisper-model", default="base",
+                   choices=["tiny", "base", "small", "medium", "large"])
+    args = p.parse_args()
+    return Config(
+        story=args.story, title=args.title, voice_id=args.voice,
+        url=args.url, output=args.output, font_size=args.font_size,
+        words_per_sub=args.words, whisper_model=args.whisper_model,
+    )
+
+
 if __name__ == "__main__":
     from check_env import validate
-    validate(exit_on_fail=True)
+    validate(exit_on_fail=False)  # warn but don't block — edge_tts will cover missing ElevenLabs key
     Producer(_parse_args()).run()
