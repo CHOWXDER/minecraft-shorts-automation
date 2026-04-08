@@ -124,7 +124,7 @@ class Observer:
                 source='reddit',
                 content_id=content_id,
                 title=post.get('title', ''),
-                body=post.get('selftext', '')[:500],
+                body=post.get('selftext', '')[:2000],
                 score=score,
                 num_comments=num_comments,
                 velocity=self._velocity(score, created_utc),

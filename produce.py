@@ -474,5 +474,31 @@ def _parse_args() -> Config:
     )
 
 
+# ── PROGRAMMATIC ENTRY POINT (used by OODA act.py) ───────────────────────────
+
+def make_video(
+    story: str,
+    title: str,
+    output: str,
+    voice_id: str = DEFAULT_VOICE,
+    url: str = DEFAULT_URL,
+    whisper_model: str = "base",
+) -> str:
+    """
+    Callable from other modules — no argparse, no sys.argv.
+    Returns output path on success, raises on failure.
+    """
+    cfg = Config(
+        story=story,
+        title=title,
+        voice_id=voice_id,
+        url=url,
+        output=output,
+        whisper_model=whisper_model,
+    )
+    Producer(cfg).run()
+    return output
+
+
 if __name__ == "__main__":
     Producer(_parse_args()).run()

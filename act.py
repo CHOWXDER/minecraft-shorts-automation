@@ -1,10 +1,10 @@
 """
 OODA Phase 4 — ACT
-Execution engine: build video, upload to YouTube, record outcomes.
+Fully automated production: story → ElevenLabs TTS → Whisper sync →
+FFmpeg render → YouTube upload → performance log.
 
-Outcomes feed back into the OODA loop's ORIENT phase on the next cycle
-via performance_log.json, allowing the system to learn which content
-types, subreddits, and title styles actually drive views.
+No external asset paths required. produce.make_video() owns the entire
+media pipeline; Act just orchestrates scheduling and outcome recording.
 """
 
 import json
@@ -14,9 +14,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
-from video_builder import VideoBuilder
+from produce import make_video
 from youtube_uploader import upload_video
-from decide import Decision
 
 
 # ---------------------------------------------------------------------------
@@ -45,15 +44,11 @@ class ActionResult:
 
 class Actor:
     """
-    ACT phase: Execute production pipeline and persist outcomes.
+    ACT phase: produce a video from a queue item, upload it, log the outcome.
 
-    Each execution record written to performance_log.json captures:
-    - The AI scores that drove the decision
-    - Whether production succeeded
-    - The scheduled upload time
-
-    This log is the feedback data that makes the OODA loop self-improving:
-    future Orient cycles can correlate AI scores with real-world outcomes.
+    Queue items come from DecisionEngine.ready_for_production() and carry
+    all the context needed — title, story, tags, upload_slot — so this
+    phase is fully self-contained once the queue is populated.
     """
 
     PERF_LOG = 'performance_log.json'
@@ -78,65 +73,73 @@ class Actor:
     # --------------------------------------------------------------- helpers
 
     def _safe_filename(self, content_id: str) -> str:
-        return content_id[:30].replace('/', '_').replace('\\', '_').replace(':', '_')
+        return content_id[:40].replace('/', '_').replace('\\', '_').replace(':', '_')
 
-    def _build_description(self, decision: Decision) -> str:
-        sig = decision.assessment.signal
+    def _build_description(self, queue_item: dict) -> str:
         lines = [
-            decision.assessment.reasoning,
+            queue_item.get('rationale', ''),
             '',
-            f'Original story from r/{sig.subreddit}',
+            f'Original story from r/{queue_item.get("subreddit", "Minecraft")}',
             '',
-            '#Minecraft #Shorts #MinecraftStories',
+            '#Minecraft #Shorts #MinecraftStories #AITA',
         ]
         return '\n'.join(lines)
 
     # ---------------------------------------------------------------- public
 
-    def execute(
-        self,
-        decision: Decision,
-        video_path: str,
-        audio_path: str,
-        subtitle_path: str,
-    ) -> ActionResult:
+    def execute_queued(self, queue_item: dict) -> ActionResult:
         """
-        Run the full production pipeline for a single Decision.
+        End-to-end production for a single queue item.
 
-        Steps:
-          1. Build the video with FFmpeg (VideoBuilder)
-          2. Upload to YouTube with scheduled publish time
-          3. Record outcome to performance log
+        1. Calls produce.make_video()  → ElevenLabs TTS + Whisper + FFmpeg
+        2. Uploads to YouTube with the scheduled publish slot
+        3. Records full outcome to performance_log.json
         """
-        t0 = time.time()
-        content_id = decision.assessment.signal.content_id
-        output_path = f'output_{self._safe_filename(content_id)}.mp4'
+        t0         = time.time()
+        content_id = queue_item['content_id']
+        title      = queue_item.get('title', 'Minecraft Short')
+        story      = queue_item.get('story') or title
+        upload_slot = queue_item.get('upload_slot')
+        tags       = queue_item.get('tags', ['Minecraft', 'Shorts', 'MinecraftStories'])
 
-        print(f'[ACT] Building: "{decision.assessment.suggested_title[:50]}"')
+        os.makedirs(self.config.OUTPUT_DIR, exist_ok=True)
+        output_path = os.path.join(
+            self.config.OUTPUT_DIR,
+            f'video_{self._safe_filename(content_id)}.mp4',
+        )
+
+        print(f'\n[ACT] Producing: "{title[:60]}"')
+        print(f'[ACT] Upload slot: {upload_slot[:16] if upload_slot else "immediate"} UTC')
 
         try:
-            builder = VideoBuilder(video_path, audio_path, subtitle_path)
-            builder.build_video(output_path)
+            make_video(
+                story=story,
+                title=title,
+                output=output_path,
+                voice_id=self.config.ELEVENLABS_VOICE_ID,
+                url=self.config.MINECRAFT_FOOTAGE_URL,
+                whisper_model=self.config.WHISPER_MODEL,
+            )
 
-            print(f'[ACT] Uploading → scheduled {decision.upload_slot[:10]}')
+            print(f'[ACT] Uploading to YouTube…')
             upload_video(
                 file=output_path,
-                title=decision.assessment.suggested_title,
-                description=self._build_description(decision),
-                tags=decision.assessment.suggested_tags,
-                scheduled_time=decision.upload_slot,
+                title=title,
+                description=self._build_description(queue_item),
+                tags=tags,
+                scheduled_time=upload_slot,
             )
 
             result = ActionResult(
                 content_id=content_id,
                 success=True,
                 video_path=output_path,
-                youtube_video_id=None,   # populated post-upload when API returns ID
-                upload_scheduled_time=decision.upload_slot,
+                youtube_video_id=None,
+                upload_scheduled_time=upload_slot,
                 error=None,
                 duration_seconds=time.time() - t0,
             )
-            print(f'[ACT] Success — production took {result.duration_seconds:.1f}s')
+            print(f'[ACT] Success — {result.duration_seconds:.1f}s total → {output_path}')
 
         except Exception as exc:
             result = ActionResult(
@@ -150,36 +153,27 @@ class Actor:
             )
             print(f'[ACT] FAILED: {exc}')
 
-        self._record(decision, result)
+        self._record(queue_item, result)
         return result
 
-    def _record(self, decision: Decision, result: ActionResult):
-        a = decision.assessment
+    def _record(self, queue_item: dict, result: ActionResult):
         record = {
             **result.to_dict(),
-            'title': a.suggested_title,
-            'subreddit': a.signal.subreddit,
-            'decision_score': decision.decision_score,
-            'ai_scores': {
-                'viral_potential': a.viral_potential,
-                'narrative_strength': a.narrative_strength,
-                'title_quality': a.title_quality,
-                'audience_fit': a.audience_fit,
-                'composite': a.composite_score,
-            },
-            'scored_by_ai': a.scored_by_ai,
+            'title': queue_item.get('title'),
+            'subreddit': queue_item.get('subreddit'),
+            'decision_score': queue_item.get('decision_score'),
+            'ai_composite': queue_item.get('ai_composite'),
             'recorded_at': datetime.now(timezone.utc).isoformat(),
         }
         self.log.append(record)
         self._save_log()
 
     def performance_summary(self) -> dict:
-        """Aggregate stats from the performance log for reporting."""
         if not self.log:
             return {'total_actions': 0}
-        total = len(self.log)
-        successes = sum(1 for r in self.log if r.get('success'))
-        avg_score = sum(r.get('decision_score', 0) for r in self.log) / total
+        total      = len(self.log)
+        successes  = sum(1 for r in self.log if r.get('success'))
+        avg_score  = sum(r.get('decision_score') or 0 for r in self.log) / total
         return {
             'total_actions': total,
             'successes': successes,

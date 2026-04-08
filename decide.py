@@ -161,10 +161,11 @@ class DecisionEngine:
             decisions.append(decision)
             seen_subreddits.add(sub)
 
-            # Persist
+            # Persist — store story body so Act phase can produce without re-scraping
             self.queue.append({
                 'content_id': assessment.signal.content_id,
                 'title': assessment.suggested_title,
+                'story': assessment.signal.body or assessment.signal.title,
                 'source_url': assessment.signal.url,
                 'subreddit': sub,
                 'upload_slot': slot,
