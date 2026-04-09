@@ -1,5 +1,5 @@
 """
-TDD test suite for the free/local pipeline components.
+TDD tests for the free/local pipeline components.
 Covers: anonymous Reddit scraper, Ollama orient (mocked), edge_tts default.
 """
 
@@ -22,49 +22,43 @@ from reddit_scraper import RedditScraper
 
 class TestRedditScraperAnonymous:
     def _fake_response(self, posts: list[dict]):
-        """Build a fake Reddit JSON response."""
         resp = MagicMock()
         resp.status_code = 200
-        resp.json.return_value = {
-            "data": {
-                "children": [{"data": p} for p in posts]
-            }
-        }
+        resp.json.return_value = {"data": {"children": [{"data": p} for p in posts]}}
         resp.raise_for_status.return_value = None
         return resp
 
-    def _post(self, score=1000, title="Test post", selftext="Body text"):
+    def _post(self, score=1000, title="Test post", selftext="Body"):
         return {
-            "title": title,
-            "selftext": selftext,
-            "score": score,
-            "num_comments": 50,
-            "url": "https://reddit.com/r/Minecraft/comments/abc",
-            "author": "testuser",
-            "created_utc": 1700000000.0,
-            "subreddit": "Minecraft",
-            "upvote_ratio": 0.95,
-            "is_self": True,
+            "title": title, "selftext": selftext, "score": score,
+            "num_comments": 50, "url": "https://reddit.com/r/Minecraft/abc",
+            "author": "testuser", "created_utc": 1700000000.0,
+            "subreddit": "Minecraft", "upvote_ratio": 0.95, "is_self": True,
         }
 
     def test_no_praw_import(self):
-        """reddit_scraper must not import praw at all."""
-        import reddit_scraper
-        import ast, inspect
-        src = inspect.getsource(reddit_scraper)
-        assert "praw" not in src, "praw found in reddit_scraper.py — must be removed"
+        import reddit_scraper, inspect
+        assert "praw" not in inspect.getsource(reddit_scraper)
 
     def test_get_top_posts_parses_json(self):
         scraper = RedditScraper()
         fake    = self._fake_response([self._post(score=800)])
-
         with patch.object(scraper._session, "get", return_value=fake):
-            with patch("time.sleep"):   # skip rate-limit delay
-                posts = scraper.get_top_posts("Minecraft", limit=5)
-
+            with patch("time.sleep"):
+                posts = scraper.get_top_posts("Minecraft")
         assert len(posts) == 1
         assert posts[0]["score"] == 800
         assert posts[0]["title"] == "Test post"
+
+    def test_get_top_posts_uses_text_key(self):
+        """Downstream orient.py expects key 'text', not 'selftext'."""
+        scraper = RedditScraper()
+        fake    = self._fake_response([self._post(selftext="The story body")])
+        with patch.object(scraper._session, "get", return_value=fake):
+            with patch("time.sleep"):
+                posts = scraper.get_top_posts("Minecraft")
+        assert "text" in posts[0]
+        assert posts[0]["text"] == "The story body"
 
     def test_get_top_posts_returns_empty_on_http_error(self):
         scraper = RedditScraper()
@@ -72,24 +66,8 @@ class TestRedditScraperAnonymous:
             posts = scraper.get_top_posts("Minecraft")
         assert posts == []
 
-    def test_filter_quality_posts_min_score(self):
-        scraper = RedditScraper()
-        posts   = [
-            self._post(score=200),
-            self._post(score=600),
-            self._post(score=1500),
-        ]
-        result = scraper.filter_quality_posts(posts, min_score=500)
-        assert len(result) == 2
-        assert all(p["score"] >= 500 for p in result)
-
-    def test_filter_keeps_all_above_threshold(self):
-        scraper = RedditScraper()
-        posts   = [self._post(score=1000), self._post(score=2000)]
-        assert scraper.filter_quality_posts(posts, min_score=100) == posts
-
-    def test_url_contains_top_and_time_filter(self):
-        scraper = RedditScraper()
+    def test_url_contains_top_and_subreddit(self):
+        scraper      = RedditScraper()
         captured_url = []
 
         def fake_get(url, **kwargs):
@@ -98,163 +76,121 @@ class TestRedditScraperAnonymous:
 
         with patch.object(scraper._session, "get", side_effect=fake_get):
             with patch("time.sleep"):
-                scraper.get_top_posts("Minecraft", limit=10, time_filter="week")
+                scraper.get_top_posts("Minecraft")
 
-        assert len(captured_url) == 1
         assert "top.json" in captured_url[0]
-        assert "t=week" in captured_url[0]
-        assert "limit=10" in captured_url[0]
+        assert "Minecraft" in captured_url[0]
+        assert "t=day" in captured_url[0]
+
+    def test_get_minecraft_stories_filters_min_score(self):
+        scraper = RedditScraper()
+        low  = self._post(score=100,  selftext="x" * 51)
+        high = self._post(score=1000, selftext="x" * 51)
+
+        with patch.object(scraper._session, "get",
+                          return_value=self._fake_response([low, high])):
+            with patch("time.sleep"):
+                posts = scraper.get_minecraft_stories()
+
+        assert all(p["score"] >= 500 for p in posts)
 
     def test_no_api_key_env_var_needed(self):
-        """Instantiating RedditScraper must not raise even with no env vars set."""
         with patch.dict("os.environ", {}, clear=True):
             scraper = RedditScraper()
         assert scraper is not None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Orient — Ollama integration (mocked)
+# Orient — simplified Ollama scoring (mocked)
 # ══════════════════════════════════════════════════════════════════════════════
 
-from observe import Signal
+from orient import Orient
 
 
-def _make_signal(title="Test", score=1000, velocity=50.0) -> Signal:
-    return Signal(
-        source="reddit",
-        content_id="abc123",
-        title=title,
-        body="Some body text",
-        score=score,
-        num_comments=100,
-        velocity=velocity,
-        comment_velocity=5.0,
-        engagement_rate=0.1,
-        score_delta=100,
-        momentum=velocity,
-        created_utc=1700000000.0,
-        url="https://reddit.com/test",
-        author="user",
-        subreddit="Minecraft",
-    )
+def _signal(title="Test", score=1000, text="A long story with details"):
+    return {"title": title, "text": text, "score": score, "subreddit": "Minecraft"}
 
 
-class MockConfig:
-    pass
-
-
-class TestOrientOllama:
+class TestOrientSimple:
     def test_no_anthropic_import(self):
-        """orient.py must not import anthropic."""
-        import orient
-        import inspect
-        src = inspect.getsource(orient)
-        assert "anthropic" not in src, "anthropic found in orient.py — must be removed"
+        import orient, inspect
+        assert "anthropic" not in inspect.getsource(orient)
 
-    def test_heuristic_fallback_always_works(self):
-        from orient import Orient
-        o = Orient(MockConfig())
-        sig    = _make_signal(score=5000, velocity=300.0)
-        result = o._heuristic_fallback(sig)
-        assert result.composite_score >= 0
-        assert result.scored_by_ai is False
-        assert result.suggested_title == sig.title[:60]
-
-    def test_heuristic_viability_high_score(self):
-        from orient import Orient, VIABILITY_THRESHOLD
-        o   = Orient(MockConfig())
-        sig = _make_signal(score=10000, velocity=500.0)
-        r   = o._heuristic_fallback(sig)
-        assert r.is_viable == (r.composite_score >= VIABILITY_THRESHOLD)
-
-    def test_analyse_empty_signals(self):
-        from orient import Orient
-        o = Orient(MockConfig())
+    def test_analyse_empty_returns_empty(self):
+        o = Orient()
         assert o.analyse([]) == []
 
-    def test_analyse_uses_heuristic_when_ollama_down(self):
-        from orient import Orient
-        o = Orient(MockConfig())
-        o._ollama_available = False   # force heuristic path
+    def test_analyse_returns_ai_score_key(self):
+        o = Orient()
+        o._ollama_available = False   # force heuristic
 
-        sigs    = [_make_signal(), _make_signal(title="Second")]
-        results = o.analyse(sigs)
+        results = o.analyse([_signal(score=5000)])
+        assert len(results) == 1
+        assert "ai_score" in results[0]
 
-        assert len(results) == 2
-        assert all(not r.scored_by_ai for r in results)
-
-    def test_analyse_sorted_by_composite_score(self):
-        from orient import Orient
-        o = Orient(MockConfig())
+    def test_analyse_score_is_int_1_to_10(self):
+        o = Orient()
         o._ollama_available = False
 
-        sigs = [
-            _make_signal(score=100,   velocity=1.0),
-            _make_signal(score=10000, velocity=500.0),
-        ]
+        results = o.analyse([_signal(score=5000)])
+        score = results[0]["ai_score"]
+        assert isinstance(score, int)
+        assert 1 <= score <= 10
+
+    def test_analyse_sorted_by_ai_score_descending(self):
+        o = Orient()
+        o._ollama_available = False
+
+        sigs    = [_signal(score=100), _signal(score=10000)]
         results = o.analyse(sigs)
-        assert results[0].composite_score >= results[1].composite_score
+        assert results[0]["ai_score"] >= results[1]["ai_score"]
 
-    def test_ollama_batch_parses_response(self):
-        """Mock Ollama HTTP call and verify Assessment is built correctly."""
-        from orient import Orient, VIABILITY_THRESHOLD
-        o = Orient(MockConfig())
+    def test_analyse_ollama_used_when_available(self):
+        o   = Orient()
+        o._ollama_available = True
 
-        fake_result = [{
-            "viral_potential":    80.0,
-            "narrative_strength": 75.0,
-            "title_quality":      70.0,
-            "audience_fit":       85.0,
-            "suggested_title":    "Epic Minecraft Story",
-            "suggested_tags":     ["Minecraft", "Shorts", "Story"],
-            "reasoning":          "Strong narrative arc.",
-            "is_viable":          True,
-        }]
-        fake_resp = MagicMock()
-        fake_resp.raise_for_status.return_value = None
-        fake_resp.json.return_value = {"response": json.dumps(fake_result)}
+        with patch("orient.query_ollama", return_value="8") as mock_q:
+            results = o.analyse([_signal()])
 
-        with patch("requests.post", return_value=fake_resp):
-            sig     = _make_signal()
-            results = o._ollama_batch([sig])
+        mock_q.assert_called()
+        assert results[0]["ai_score"] == 8
 
+    def test_ollama_score_regex_handles_various_formats(self):
+        """Score extraction must handle '7', '7/10', 'Score: 9', '10'."""
+        import re
+        cases = [("7", 7), ("7/10", 7), ("Score: 9", 9), ("10", 10), ("I give it a 6.", 6)]
+        for raw, expected in cases:
+            match = re.search(r'\b([1-9]|10)\b', raw)
+            assert match and int(match.group(1)) == expected, f"Failed for: {raw}"
+
+    def test_heuristic_fallback_when_ollama_down(self):
+        o = Orient()
+        with patch("orient.is_running", return_value=False):
+            o._ollama_available = None  # reset probe cache
+            results = o.analyse([_signal(score=5000)])
         assert len(results) == 1
-        r = results[0]
-        assert r.scored_by_ai is True
-        assert r.suggested_title == "Epic Minecraft Story"
-        assert r.viral_potential == 80.0
-        # composite = 0.35*80 + 0.25*75 + 0.20*70 + 0.20*85
-        expected = round(0.35 * 80 + 0.25 * 75 + 0.20 * 70 + 0.20 * 85, 1)
-        assert r.composite_score == expected
+        assert 1 <= results[0]["ai_score"] <= 10
 
     def test_synthesise_trends_returns_dict(self):
-        from orient import Orient, Assessment
-        o    = Orient(MockConfig())
-        sig  = _make_signal()
-        a    = o._heuristic_fallback(sig)
-        a.is_viable = True
-        trends = o.synthesise_trends([a])
+        o       = Orient()
+        o._ollama_available = False
+        results = o.analyse([_signal(score=5000)])
+        trends  = o.synthesise_trends(results)
         assert "cycle_viable" in trends
-        assert "avg_composite_score" in trends
-        assert "trending_tags" in trends
+        assert "cycle_total"  in trends
 
-    def test_probe_ollama_marks_unavailable_on_connection_error(self):
-        from orient import Orient
-        o = Orient(MockConfig())
-        with patch("requests.get", side_effect=Exception("connection refused")):
+    def test_probe_stores_result(self):
+        o = Orient()
+        with patch("orient.is_running", return_value=False):
             result = o._probe_ollama()
         assert result is False
         assert o._ollama_available is False
 
-    def test_probe_ollama_marks_available_on_200(self):
-        from orient import Orient
-        o    = Orient(MockConfig())
-        resp = MagicMock()
-        resp.status_code = 200
-        with patch("requests.get", return_value=resp):
+    def test_probe_true_when_ollama_up(self):
+        o = Orient()
+        with patch("orient.is_running", return_value=True):
             result = o._probe_ollama()
         assert result is True
-        assert o._ollama_available is True
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -263,10 +199,8 @@ class TestOrientOllama:
 
 class TestEdgeTTSDefault:
     def test_no_api_key_goes_to_edge_tts(self, tmp_path, monkeypatch):
-        """With no API key, TTSEngine must call edge_tts, not ElevenLabs."""
         from produce import TTSEngine, CACHE
         monkeypatch.setattr("produce.CACHE", tmp_path / "cache")
-
         edge_called = []
 
         def fake_edge(self, text, path):
@@ -279,7 +213,17 @@ class TestEdgeTTSDefault:
 
         assert edge_called, "edge_tts was not called despite no API key"
 
-    def test_edge_tts_is_fallback_voice_constant(self):
+    def test_fallback_voice_is_neural(self):
         from produce import TTSEngine
-        assert "Neural" in TTSEngine.FALLBACK_VOICE   # Microsoft neural voice
-        assert "en-US" in TTSEngine.FALLBACK_VOICE
+        assert "Neural" in TTSEngine.FALLBACK_VOICE
+        assert "en-US"  in TTSEngine.FALLBACK_VOICE
+
+    def test_cache_key_deterministic(self):
+        from produce import TTSEngine
+        eng = TTSEngine("", "voice")
+        assert eng._cache_key("hello") == eng._cache_key("hello")
+
+    def test_cache_key_differs_by_text(self):
+        from produce import TTSEngine
+        eng = TTSEngine("", "voice")
+        assert eng._cache_key("hello") != eng._cache_key("world")

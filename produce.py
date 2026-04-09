@@ -1,55 +1,23 @@
 #!/usr/bin/env python3
 """
-produce.py — Elite Shorts Production Pipeline
-edge_tts (free, local) → Whisper caption sync →
-animated ASS subtitles → FFmpeg render.
-
-100% free and local by default. No API keys required.
-Optional: set ELEVENLABS_API_KEY to use premium voice instead.
-
-Zero config needed to run standalone:
-    py produce.py
+produce.py — Free/Local Shorts Production Pipeline
+edge_tts → Whisper word-sync → ASS subtitles → FFmpeg render
+No API keys required.
 """
 
-import argparse
 import asyncio
-import base64
-import hashlib
 import os
 import random
-import shutil
 import subprocess
 import sys
-import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
-# ── DEFAULTS ──────────────────────────────────────────────────────────────────
-
-DEFAULT_STORY = (
-    "So my roommate has been stealing my food for months. I labeled everything, "
-    "talked to him twice, he still kept doing it. Last night I spent two hours "
-    "making a lasagna, came back and he ate half of it straight from the dish. "
-    "I finally lost it and told him he has two weeks to find somewhere else to live. "
-    "Now my other roommates are saying I overreacted and that it was just food. But "
-    "it's not just food — it's the fact that I've asked him repeatedly and he just "
-    "doesn't care. My girlfriend says I did the right thing. Am I the asshole for "
-    "kicking him out over this?"
-)
-DEFAULT_TITLE = "AITA for kicking out my roommate over food?"
-DEFAULT_URL   = "https://www.youtube.com/watch?v=85z7jqGAGcc"
-DEFAULT_VOICE = "tMvyQtpCVQ0DkixuYm6J"
-DEFAULT_OUT   = "final_video.mp4"
-
 TEMP  = Path("temp")
 CACHE = TEMP / "cache"
 
-# ── SUBTITLE STYLE ────────────────────────────────────────────────────────────
+DEFAULT_URL = "https://www.youtube.com/watch?v=85z7jqGAGcc"
 
 COLORS = [
     "&H0000FFFF",  # yellow
@@ -63,6 +31,7 @@ COLORS = [
     "&H00FFFFFF",  # white
     "&H0080FFFF",  # light yellow
 ]
+ANIMATIONS = ["pop", "bounce", "zoom", "slam"]
 
 EMOJI_MAP = {
     "food": "🍕",       "lasagna": "🍝",      "roommate": "🏠",
@@ -78,49 +47,40 @@ EMOJI_MAP = {
     "home": "🏡",       "money": "💰",          "work": "💼",
 }
 
-ANIMATIONS = ["pop", "bounce", "zoom", "slam"]
 
-# ── DATA CLASSES ──────────────────────────────────────────────────────────────
-
-@dataclass
-class WordCue:
-    start: float
-    end: float
-    text: str
-
+# ── DATA ──────────────────────────────────────────────────────────────────────
 
 @dataclass
 class Config:
-    story: str
-    title: str
-    voice_id: str
-    url: str
-    output: str
-    font_size: int = 13
-    words_per_sub: int = 3
+    story:          str
+    title:          str
+    voice_id:       str  = ""    # optional — kept for API compat (edge_tts ignores it)
+    url:            str  = DEFAULT_URL
+    output:         str  = "final_video.mp4"
+    font_size:      int  = 13
+    words_per_sub:  int  = 3
     avoid_edge_secs: int = 60
-    whisper_model: str = "base"
+    whisper_model:  str  = "base"
+
+# Alias so ooda / act code can also use VideoConfig name internally
+VideoConfig = Config
 
 
-# ── TTS ENGINE ────────────────────────────────────────────────────────────────
+# ── TTS ───────────────────────────────────────────────────────────────────────
 
 class TTSEngine:
-    """
-    ElevenLabs TTS with MD5 cache and exponential-backoff retry.
-    If ElevenLabs fails (bad key, quota, network) → auto-fallback to edge_tts.
-    Whisper will sync captions against whichever audio was produced.
-    """
+    FALLBACK_VOICE = "en-US-ChristopherNeural"
 
-    FALLBACK_VOICE = "en-US-ChristopherNeural"  # edge_tts fallback
-
-    def __init__(self, api_key: str, voice_id: str):
+    def __init__(self, api_key: str = "", voice_id: str = ""):
         self.api_key  = api_key
-        self.voice_id = voice_id
+        self.voice_id = voice_id or self.FALLBACK_VOICE
 
     def _cache_key(self, text: str) -> str:
+        import hashlib
         return hashlib.md5(f"{text}:{self.voice_id}:v3".encode()).hexdigest()
 
     def generate(self, text: str, audio_path: Path) -> None:
+        import shutil
         CACHE.mkdir(parents=True, exist_ok=True)
         key       = self._cache_key(text)
         cache_mp3 = CACHE / f"{key}.mp3"
@@ -130,8 +90,9 @@ class TTSEngine:
             shutil.copy(cache_mp3, audio_path)
             return
 
-        # ── Try ElevenLabs ──────────────────────────────────────────────────
+        # Optional ElevenLabs if key provided
         if self.api_key:
+            import base64, time as _time
             print("  [TTS] calling ElevenLabs…")
             for attempt in range(3):
                 try:
@@ -150,13 +111,10 @@ class TTSEngine:
                     return
                 except Exception as exc:
                     wait = 2 ** attempt
-                    print(f"  [TTS] attempt {attempt + 1} failed: {exc!s:.120} — retrying in {wait}s")
-                    time.sleep(wait)
-            print("  [TTS] ElevenLabs unavailable — switching to edge_tts fallback")
-        else:
-            print("  [TTS] No ELEVENLABS_API_KEY — using edge_tts fallback")
+                    print(f"  [TTS] attempt {attempt+1} failed: {exc!s:.80} — retry in {wait}s")
+                    _time.sleep(wait)
+            print("  [TTS] ElevenLabs failed — falling back to edge_tts")
 
-        # ── Fallback: edge_tts ───────────────────────────────────────────────
         self._edge_tts(text, audio_path)
         shutil.copy(audio_path, cache_mp3)
 
@@ -164,10 +122,7 @@ class TTSEngine:
         try:
             import edge_tts
         except ImportError:
-            sys.exit(
-                "\n[TTS] edge_tts not installed (and ElevenLabs failed).\n"
-                "Fix:  py -m pip install edge-tts\n"
-            )
+            sys.exit("edge-tts not installed. Run: pip install edge-tts")
 
         async def _run():
             comm = edge_tts.Communicate(text, voice=self.FALLBACK_VOICE)
@@ -175,62 +130,19 @@ class TTSEngine:
 
         print(f"  [TTS] edge_tts → {self.FALLBACK_VOICE}")
         asyncio.run(_run())
-        print("  [TTS] edge_tts audio written")
-
-
-# ── WHISPER ENGINE ────────────────────────────────────────────────────────────
-
-class WhisperEngine:
-    """
-    Local OpenAI Whisper for perfect word-level caption timing.
-    Free, offline — works with any audio source (ElevenLabs or edge_tts).
-    Install: py -m pip install openai-whisper
-    """
-
-    def __init__(self, model_name: str = "base"):
-        self.model_name = model_name
-        self._model     = None
-
-    def _load(self):
-        if self._model is None:
-            try:
-                import whisper
-                print(f"  [Whisper] loading '{self.model_name}' model…")
-                self._model = whisper.load_model(self.model_name)
-            except ImportError:
-                sys.exit(
-                    "\n[Whisper] openai-whisper not installed.\n"
-                    "Fix:  py -m pip install openai-whisper\n"
-                )
-        return self._model
-
-    def transcribe(self, audio_path: Path) -> list[WordCue]:
-        model  = self._load()
-        print(f"  [Whisper] transcribing {audio_path.name}…")
-        result = model.transcribe(
-            str(audio_path),
-            word_timestamps=True,
-            language="en",
-        )
-        cues: list[WordCue] = []
-        for segment in result.get("segments", []):
-            for word in segment.get("words", []):
-                w = word.get("word", "").strip()
-                if w:
-                    cues.append(WordCue(
-                        start=float(word["start"]),
-                        end=float(word["end"]),
-                        text=w,
-                    ))
-        print(f"  [Whisper] {len(cues)} word cues extracted")
-        return cues
+        print("  [TTS] done")
 
 
 # ── SUBTITLE ENGINE ───────────────────────────────────────────────────────────
 
-class SubtitleEngine:
-    """ASS subtitles: per-card animation, cycling colour, emoji injection."""
+@dataclass
+class WordCue:
+    start: float
+    end:   float
+    text:  str
 
+
+class SubtitleEngine:
     ASS_HEADER = """\
 [Script Info]
 ScriptType: v4.00+
@@ -260,14 +172,10 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
 
     @staticmethod
     def _anim_tags(style: str) -> str:
-        if style == "pop":
-            return r"{\fscx130\fscy130\t(0,100,\fscx100\fscy100)}"
-        if style == "bounce":
-            return r"{\fscx85\fscy85\t(0,70,\fscx115\fscy115)\t(70,140,\fscx100\fscy100)}"
-        if style == "zoom":
-            return r"{\fscx40\fscy40\t(0,130,\fscx100\fscy100)}"
-        if style == "slam":
-            return r"{\fscx160\fscy160\t(0,80,\fscx95\fscy95)\t(80,140,\fscx100\fscy100)}"
+        if style == "pop":    return r"{\fscx130\fscy130\t(0,100,\fscx100\fscy100)}"
+        if style == "bounce": return r"{\fscx85\fscy85\t(0,70,\fscx115\fscy115)\t(70,140,\fscx100\fscy100)}"
+        if style == "zoom":   return r"{\fscx40\fscy40\t(0,130,\fscx100\fscy100)}"
+        if style == "slam":   return r"{\fscx160\fscy160\t(0,80,\fscx95\fscy95)\t(80,140,\fscx100\fscy100)}"
         return ""
 
     @staticmethod
@@ -278,68 +186,73 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
 
     def build(self, cues: list[WordCue], output_path: Path) -> None:
         header    = self.ASS_HEADER.format(fontsize=self.font_size)
-        events: list[str] = []
+        events    = []
         color_idx = 0
-
         for i in range(0, len(cues), self.words_per_sub):
-            chunk = cues[i : i + self.words_per_sub]
+            chunk = cues[i:i + self.words_per_sub]
             start = self._ass_time(chunk[0].start)
             end   = self._ass_time(chunk[-1].end)
-
             words = [c.text for c in chunk]
             words[0] = words[0].capitalize()
             words = [self._inject_emoji(w) for w in words]
-
-            color     = COLORS[color_idx % len(COLORS)]
-            color_idx += 1
-            anim_tag  = self._anim_tags(random.choice(ANIMATIONS))
-            color_tag = f"{{\\c{color}}}"
-
-            text = " ".join(words).upper()
-            line = (
+            text  = " ".join(words).upper()
+            color = COLORS[color_idx % len(COLORS)]
+            anim  = self._anim_tags(random.choice(ANIMATIONS))
+            events.append(
                 f"Dialogue: 0,{start},{end},Default,,0,0,0,,"
-                f"{anim_tag}{color_tag}{text}"
+                f"{anim}{{\\c{color}}}{text}"
             )
-            events.append(line)
-
+            color_idx += 1
         output_path.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
-        print(f"  [Subs] {len(events)} subtitle cards → {output_path.name}")
+        print(f"  [Subs] {len(events)} cards → {output_path.name}")
 
 
-# ── FOOTAGE ENGINE ────────────────────────────────────────────────────────────
+# ── WHISPER ───────────────────────────────────────────────────────────────────
 
-class FootageEngine:
-    """Download and cache Minecraft footage via yt_dlp."""
+class WhisperEngine:
+    def __init__(self, model_name: str = "base"):
+        self.model_name = model_name
 
-    def __init__(self, url: str, output_path: Path):
-        self.url         = url
-        self.output_path = output_path
+    def transcribe(self, audio_path: Path) -> list[WordCue]:
+        try:
+            import whisper
+        except ImportError:
+            sys.exit("openai-whisper not installed. Run: pip install openai-whisper")
 
-    def ensure(self) -> None:
-        if self.output_path.exists():
-            print("  [Footage] cached — skipping download")
-            return
-        print("  [Footage] downloading…")
-        subprocess.run(
-            [
-                sys.executable, "-m", "yt_dlp",
-                "--js-runtimes", "node",
-                "--cookies-from-browser", "firefox",
-                "-o", str(self.output_path),
-                "-f", "299+140/136+140/18",
-                self.url,
-            ],
-            check=True,
-        )
+        print(f"  [Whisper] loading '{self.model_name}' model…")
+        model  = whisper.load_model(self.model_name)
+        result = model.transcribe(str(audio_path), word_timestamps=True, language="en")
+        cues: list[WordCue] = []
+        for seg in result.get("segments", []):
+            for w in seg.get("words", []):
+                word = w.get("word", "").strip()
+                if word:
+                    cues.append(WordCue(float(w["start"]), float(w["end"]), word))
+        print(f"  [Whisper] {len(cues)} word cues")
+        return cues
+
+
+# ── FOOTAGE ───────────────────────────────────────────────────────────────────
+
+def ensure_footage(url: str, mc_path: Path) -> None:
+    if mc_path.exists():
+        print("  [Footage] using cached clip")
+        return
+    print("  [Footage] downloading…")
+    subprocess.run(
+        [sys.executable, "-m", "yt_dlp",
+         "-o", str(mc_path),
+         "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+         url],
+        check=True,
+    )
 
 
 # ── RENDERER ──────────────────────────────────────────────────────────────────
 
 class Renderer:
-    """FFmpeg: crop→scale→burn ASS subs, loudnorm audio, GPU-accelerated encode."""
-
-    def __init__(self, cfg: Config):
-        self.cfg = cfg
+    def __init__(self, cfg: Config = None):
+        self.cfg = cfg or Config(story="", title="", output="")
 
     @staticmethod
     def _probe_duration(path: Path) -> float:
@@ -352,38 +265,23 @@ class Renderer:
 
     @staticmethod
     def _safe_path(path: Path) -> str:
-        """
-        Prefer relative path — avoids the C: drive colon that FFmpeg 8.x
-        misparses as an option separator in the ass= filter.
-        """
         try:
-            rel = path.resolve().relative_to(Path.cwd())
-            return str(rel).replace("\\", "/")
+            return str(path.resolve().relative_to(Path.cwd())).replace("\\", "/")
         except ValueError:
             return str(path.resolve()).replace("\\", "/").replace(":", "\\:")
 
     @staticmethod
     def _detect_video_codec() -> str:
-        """
-        Probe for NVIDIA NVENC hardware encoder.
-        Falls back to libx264 (CPU) silently — never crashes.
-        NVENC is ~8x faster and frees CPU for Whisper.
-        """
         try:
-            subprocess.run(
-                ["ffmpeg", "-hide_banner", "-encoders"],
-                capture_output=True, check=True,
-            )
-            # Quick encode test with null output
             subprocess.run(
                 ["ffmpeg", "-f", "lavfi", "-i", "nullsrc=s=64x64:d=0.1",
                  "-c:v", "h264_nvenc", "-f", "null", "-"],
                 capture_output=True, check=True,
             )
-            print("  [Render] GPU detected → using h264_nvenc")
+            print("  [Render] GPU detected → h264_nvenc")
             return "h264_nvenc"
         except Exception:
-            print("  [Render] No GPU → using libx264")
+            print("  [Render] No GPU → libx264")
             return "libx264"
 
     def render(self, footage: Path, audio: Path, subs: Path, output: Path) -> None:
@@ -396,135 +294,117 @@ class Renderer:
         codec    = self._detect_video_codec()
         sub_path = self._safe_path(subs)
 
-        # NVENC uses -rc vbr + -cq instead of -crf
         if codec == "h264_nvenc":
-            codec_flags = ["-c:v", "h264_nvenc", "-rc", "vbr", "-cq", "19",
-                           "-preset", "p4", "-b:v", "0"]
+            codec_flags = ["-c:v", "h264_nvenc", "-rc", "vbr", "-cq", "19", "-preset", "p4", "-b:v", "0"]
         else:
             codec_flags = ["-c:v", "libx264", "-crf", "19", "-preset", "medium"]
 
         vf = f"[0:v]crop=ih*9/16:ih,scale=1080:1920,ass={sub_path}[vout]"
         af = "[1:a]loudnorm=I=-14:LRA=11:TP=-1.5[a]"
 
-        print(f"  [Render] clip {start_time:.1f}s → {start_time + audio_dur:.1f}s  codec={codec}")
+        print(f"  [Render] {start_time:.1f}s → {start_time+audio_dur:.1f}s  codec={codec}")
         try:
             subprocess.run(
-                [
-                    "ffmpeg", "-y",
-                    "-ss", str(start_time), "-t", str(audio_dur + 1),
-                    "-i", str(footage),
-                    "-i", str(audio),
-                    "-filter_complex", f"{vf};{af}",
-                    "-map", "[vout]", "-map", "[a]",
-                    *codec_flags,
-                    "-pix_fmt", "yuv420p",
-                    "-c:a", "aac", "-b:a", "192k", "-ar", "44100",
-                    "-shortest",
-                    str(output),
-                ],
-                check=True,
-                capture_output=True,
+                ["ffmpeg", "-y",
+                 "-ss", str(start_time), "-t", str(audio_dur + 1),
+                 "-i", str(footage),
+                 "-i", str(audio),
+                 "-filter_complex", f"{vf};{af}",
+                 "-map", "[vout]", "-map", "[a]",
+                 *codec_flags,
+                 "-pix_fmt", "yuv420p",
+                 "-c:a", "aac", "-b:a", "192k", "-ar", "44100",
+                 "-shortest", str(output)],
+                check=True, capture_output=True,
             )
         except subprocess.CalledProcessError as exc:
             stderr = (exc.stderr or b"").decode(errors="replace").strip()
-            # Surface the most relevant FFmpeg error line
             relevant = next(
                 (ln for ln in reversed(stderr.splitlines()) if ln.strip()),
-                stderr[-300:] if stderr else "no stderr captured",
+                stderr[-300:] if stderr else "no stderr",
             )
             raise RuntimeError(
                 f"FFmpeg render failed (exit {exc.returncode}).\n"
                 f"  Codec   : {codec}\n"
                 f"  Sub path: {sub_path}\n"
-                f"  Error   : {relevant}\n"
-                f"  Full log: run ffmpeg manually to see full output"
+                f"  Error   : {relevant}"
             ) from exc
 
-        print(f"\n  Done! → {output}")
+        print(f"  [Render] done → {output}")
 
 
-# ── PRODUCER ──────────────────────────────────────────────────────────────────
+# ── PRODUCER (orchestrates all phases) ───────────────────────────────────────
 
 class Producer:
-    """OODA-phase orchestrator with parallel asset acquisition."""
-
     def __init__(self, cfg: Config):
         self.cfg      = cfg
         api_key       = os.getenv("ELEVENLABS_API_KEY", "")
         self.tts      = TTSEngine(api_key, cfg.voice_id)
         self.whisper  = WhisperEngine(cfg.whisper_model)
         self.subs     = SubtitleEngine(cfg.font_size, cfg.words_per_sub)
-        self.footage  = FootageEngine(cfg.url, TEMP / "minecraft.mp4")
         self.renderer = Renderer(cfg)
 
-    @staticmethod
-    def _phase(name: str) -> None:
-        print(f"\n{'=' * 52}\n  {name}\n{'=' * 52}")
-
-    def _tts_job(self, text: str, path: Path, done: threading.Event) -> None:
-        try:
-            self.tts.generate(text, path)
-        except Exception as exc:
-            print(f"  [TTS] fatal: {exc}")
-        finally:
-            done.set()
-
-    def _dl_job(self, done: threading.Event) -> None:
-        try:
-            self.footage.ensure()
-        except Exception as exc:
-            print(f"  [Footage] fatal: {exc}")
-        finally:
-            done.set()
-
     def run(self) -> None:
+        import threading
         TEMP.mkdir(exist_ok=True)
+        CACHE.mkdir(exist_ok=True)
 
         full_text  = f"{self.cfg.title}. {self.cfg.story}"
         audio_path = TEMP / "voiceover.mp3"
         subs_path  = TEMP / "subtitles.ass"
         mc_path    = TEMP / "minecraft.mp4"
 
-        # OBSERVE ── parallel TTS + footage download ──────────────────────────
-        self._phase("OBSERVE  Acquiring Assets (parallel)")
-        tts_done = threading.Event()
-        dl_done  = threading.Event()
-        t1 = threading.Thread(target=self._tts_job, args=(full_text, audio_path, tts_done), daemon=True)
-        t2 = threading.Thread(target=self._dl_job,  args=(dl_done,), daemon=True)
+        # Parallel: TTS + footage download
+        print("\n[1/4] Acquiring assets (parallel TTS + footage)…")
+        tts_err = []
+        dl_err  = []
+
+        def _tts():
+            try:
+                self.tts.generate(full_text, audio_path)
+            except Exception as e:
+                tts_err.append(e)
+
+        def _dl():
+            try:
+                ensure_footage(self.cfg.url, mc_path)
+            except Exception as e:
+                dl_err.append(e)
+
+        t1 = threading.Thread(target=_tts, daemon=True)
+        t2 = threading.Thread(target=_dl,  daemon=True)
         t1.start(); t2.start()
         t1.join();  t2.join()
 
         if not audio_path.exists():
-            sys.exit("[ERROR] Audio file not produced — check TTS errors above.")
+            sys.exit(f"[ERROR] Audio not created. {tts_err[0] if tts_err else 'Check TTS.'}")
         if not mc_path.exists():
-            sys.exit("[ERROR] Footage not downloaded — check yt_dlp errors above.")
+            sys.exit(f"[ERROR] Footage missing. {dl_err[0] if dl_err else 'Place minecraft.mp4 in temp/.'}")
 
-        # ORIENT ── Whisper word-level timing ─────────────────────────────────
-        self._phase("ORIENT  Whisper Caption Sync")
+        print("\n[2/4] Whisper caption sync…")
         cues = self.whisper.transcribe(audio_path)
         if not cues:
-            sys.exit("[Whisper] No word cues returned — is the audio file valid?")
+            sys.exit("[ERROR] Whisper returned no word cues")
 
-        # DECIDE ── build subtitle cards ───────────────────────────────────────
-        self._phase("DECIDE  Building Subtitles")
+        print("\n[3/4] Building subtitles…")
         self.subs.build(cues, subs_path)
 
-        # ACT ── render ────────────────────────────────────────────────────────
-        self._phase("ACT  Rendering Final Video")
+        print("\n[4/4] Rendering…")
         self.renderer.render(mc_path, audio_path, subs_path, Path(self.cfg.output))
+        print(f"\n  Done → {self.cfg.output}")
 
 
-# ── PROGRAMMATIC ENTRY POINT (used by OODA act.py) ───────────────────────────
+# ── PUBLIC ENTRY POINT ────────────────────────────────────────────────────────
 
 def make_video(
-    story: str,
-    title: str,
-    output: str,
-    voice_id: str = DEFAULT_VOICE,
-    url: str = DEFAULT_URL,
+    story:         str,
+    title:         str,
+    output:        str,
+    voice_id:      str = "",
+    url:           str = DEFAULT_URL,
     whisper_model: str = "base",
 ) -> str:
-    """Callable from other modules — no argparse, no sys.argv."""
+    """Called by ooda_loop.py — returns output path on success."""
     cfg = Config(
         story=story, title=title, voice_id=voice_id,
         url=url, output=output, whisper_model=whisper_model,
@@ -533,28 +413,18 @@ def make_video(
     return output
 
 
-# ── ENTRY POINT ───────────────────────────────────────────────────────────────
-
-def _parse_args() -> Config:
-    p = argparse.ArgumentParser(description="Elite Minecraft Shorts Producer")
-    p.add_argument("--story",         default=DEFAULT_STORY)
-    p.add_argument("--title",         default=DEFAULT_TITLE)
-    p.add_argument("--voice",         default=DEFAULT_VOICE)
-    p.add_argument("--url",           default=DEFAULT_URL)
-    p.add_argument("--output",        default=DEFAULT_OUT)
-    p.add_argument("--font-size",     type=int, default=13)
-    p.add_argument("--words",         type=int, default=3)
-    p.add_argument("--whisper-model", default="base",
-                   choices=["tiny", "base", "small", "medium", "large"])
-    args = p.parse_args()
-    return Config(
-        story=args.story, title=args.title, voice_id=args.voice,
-        url=args.url, output=args.output, font_size=args.font_size,
-        words_per_sub=args.words, whisper_model=args.whisper_model,
-    )
-
+# ── STANDALONE ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    from check_env import validate
-    validate(exit_on_fail=False)  # warn but don't block — edge_tts will cover missing ElevenLabs key
-    Producer(_parse_args()).run()
+    result = make_video(
+        story=(
+            "So my roommate has been stealing my food for months. I labeled everything, "
+            "talked to him twice, he still kept doing it. Last night I made a lasagna, "
+            "came back and he ate half of it straight from the dish. I finally snapped "
+            "and told him he has two weeks to find somewhere else to live. Now my other "
+            "roommates are saying I overreacted. Am I the asshole?"
+        ),
+        title="AITA for kicking out my roommate over food?",
+        output="final_video.mp4",
+    )
+    print(f"\nDone: {result}")
