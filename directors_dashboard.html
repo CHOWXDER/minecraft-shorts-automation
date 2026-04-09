@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Director's Dashboard — Minecraft Shorts</title>
+<style>
+  :root{--green:#00ff88;--yellow:#ffd700;--red:#ff4444;--blue:#00aaff;--bg:#0a0a0f;--card:#12121a;--border:#1e1e2e}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:#e0e0e0;font-family:'Courier New',monospace;padding:20px}
+  h1{color:var(--green);font-size:1.4rem;letter-spacing:2px;margin-bottom:4px}
+  .sub{color:#666;font-size:.75rem;margin-bottom:24px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-bottom:20px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px}
+  .card h2{font-size:.7rem;letter-spacing:2px;color:#666;margin-bottom:12px;text-transform:uppercase}
+  .phase{font-size:1.6rem;font-weight:bold;color:var(--yellow);letter-spacing:3px}
+  .phase.done{color:var(--green)}
+  .phase.error{color:var(--red)}
+  .bar-wrap{background:#1a1a2e;border-radius:4px;height:10px;margin:10px 0;overflow:hidden}
+  .bar{height:100%;background:linear-gradient(90deg,var(--green),var(--blue));border-radius:4px;transition:width .4s ease}
+  .pct{font-size:1.1rem;color:var(--blue)}
+  .stat{display:flex;justify-content:space-between;margin:4px 0;font-size:.8rem}
+  .stat .label{color:#888}
+  .stat .val{color:#e0e0e0}
+  .val.ok{color:var(--green)}
+  .val.warn{color:var(--yellow)}
+  .val.err{color:var(--red)}
+  .log-box{background:#0a0a0f;border:1px solid var(--border);border-radius:4px;padding:10px;height:180px;overflow-y:auto;font-size:.72rem;line-height:1.6}
+  .log-line{white-space:pre-wrap;word-break:break-all}
+  .log-line.INFO{color:#aaa}
+  .log-line.WARN{color:var(--yellow)}
+  .log-line.ERR{color:var(--red)}
+  .log-line.OK{color:var(--green)}
+  .queue-item{border-left:3px solid var(--border);padding:4px 8px;margin:4px 0;font-size:.75rem}
+  .queue-item.ready{border-color:var(--green)}
+  .queue-item.pending{border-color:var(--yellow)}
+  .pulse{animation:pulse 1.5s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}
+  .dot.live{background:var(--green)}
+  .dot.dead{background:var(--red)}
+  footer{text-align:center;color:#333;font-size:.65rem;margin-top:20px}
+  .badge{display:inline-block;padding:2px 8px;border-radius:3px;font-size:.65rem;font-weight:bold;letter-spacing:1px}
+  .badge.green{background:#00ff8822;color:var(--green);border:1px solid var(--green)}
+  .badge.yellow{background:#ffd70022;color:var(--yellow);border:1px solid var(--yellow)}
+  .badge.red{background:#ff444422;color:var(--red);border:1px solid var(--red)}
+</style>
+</head>
+<body>
+
+<h1>&#9726; DIRECTOR'S DASHBOARD</h1>
+<p class="sub">Minecraft Shorts Automation &mdash; <span id="ts">loading…</span> &nbsp;
+  <span class="dot live pulse" id="live-dot"></span><span id="live-label">LIVE</span>
+</p>
+
+<div class="grid">
+
+  <!-- Phase -->
+  <div class="card">
+    <h2>&#9654; Current Phase</h2>
+    <div class="phase" id="phase">IDLE</div>
+    <div class="bar-wrap"><div class="bar" id="bar" style="width:0%"></div></div>
+    <div class="pct" id="pct">0%</div>
+    <div class="stat" style="margin-top:8px">
+      <span class="label">Stage</span><span class="val" id="stage">—</span>
+    </div>
+    <div class="stat">
+      <span class="label">Video</span><span class="val" id="current-video">—</span>
+    </div>
+  </div>
+
+  <!-- Services -->
+  <div class="card">
+    <h2>&#128274; Services</h2>
+    <div class="stat"><span class="label">Ollama</span><span class="val" id="svc-ollama">—</span></div>
+    <div class="stat"><span class="label">edge_tts</span><span class="val" id="svc-tts">—</span></div>
+    <div class="stat"><span class="label">Whisper</span><span class="val" id="svc-whisper">—</span></div>
+    <div class="stat"><span class="label">FFmpeg</span><span class="val" id="svc-ffmpeg">—</span></div>
+    <div class="stat"><span class="label">YouTube</span><span class="val" id="svc-youtube">—</span></div>
+    <div class="stat" style="margin-top:8px"><span class="label">GPU Codec</span><span class="val" id="svc-codec">—</span></div>
+    <div class="stat"><span class="label">Model</span><span class="val" id="svc-model">—</span></div>
+  </div>
+
+  <!-- Stats -->
+  <div class="card">
+    <h2>&#128202; Session Stats</h2>
+    <div class="stat"><span class="label">Videos Produced</span><span class="val ok" id="stat-produced">0</span></div>
+    <div class="stat"><span class="label">Uploaded</span><span class="val ok" id="stat-uploaded">0</span></div>
+    <div class="stat"><span class="label">Queue (ready)</span><span class="val" id="stat-queue">0</span></div>
+    <div class="stat"><span class="label">OODA Cycles</span><span class="val" id="stat-cycles">0</span></div>
+    <div class="stat"><span class="label">Signals Scored</span><span class="val" id="stat-signals">0</span></div>
+    <div class="stat" style="margin-top:8px"><span class="label">Last Produced</span><span class="val" id="stat-last">—</span></div>
+    <div class="stat"><span class="label">Score (avg)</span><span class="val" id="stat-score">—</span></div>
+  </div>
+
+</div>
+
+<!-- Logs -->
+<div class="card" style="margin-bottom:16px">
+  <h2>&#128221; Live Log</h2>
+  <div class="log-box" id="log-box">
+    <div class="log-line INFO">Waiting for pipeline data…</div>
+  </div>
+</div>
+
+<!-- Queue -->
+<div class="card">
+  <h2>&#128229; Queue</h2>
+  <div id="queue-list"><em style="color:#444;font-size:.75rem">No items yet.</em></div>
+</div>
+
+<footer>Auto-refresh every 2s &mdash; Minecraft Shorts Automation &mdash; 100% local</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+let lastLogCount = 0;
+
+async function fetchJSON(url) {
+  try {
+    const r = await fetch(url + '?t=' + Date.now());
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+function svcBadge(val) {
+  if (!val) return '<span class="val">—</span>';
+  const ok = ['ok','running','ready','detected','h264_nvenc','libx264','cached'];
+  const warn = ['fallback','heuristic','missing'];
+  const v = val.toLowerCase();
+  if (ok.some(k => v.includes(k))) return `<span class="val ok">${val}</span>`;
+  if (warn.some(k => v.includes(k))) return `<span class="val warn">${val}</span>`;
+  return `<span class="val err">${val}</span>`;
+}
+
+function classForLog(line) {
+  if (line.includes('[ERROR]') || line.includes('fatal') || line.includes('FAIL')) return 'ERR';
+  if (line.includes('[WARN]') || line.includes('fallback')) return 'WARN';
+  if (line.includes('Done') || line.includes('✓') || line.includes('SUCCESS')) return 'OK';
+  return 'INFO';
+}
+
+async function refresh() {
+  const d = await fetchJSON('temp/progress.json');
+  $('ts').textContent = new Date().toLocaleTimeString();
+
+  if (!d) {
+    $('live-dot').className = 'dot dead';
+    $('live-label').textContent = 'OFFLINE';
+    return;
+  }
+  $('live-dot').className = 'dot live pulse';
+  $('live-label').textContent = 'LIVE';
+
+  // Phase
+  const phase = (d.phase || 'IDLE').toUpperCase();
+  $('phase').textContent = phase;
+  $('phase').className = 'phase' + (phase === 'DONE' ? ' done' : phase === 'ERROR' ? ' error' : '');
+  const pct = d.progress || 0;
+  $('bar').style.width = pct + '%';
+  $('pct').textContent = pct + '%';
+  $('stage').textContent = d.stage || '—';
+  $('current-video').textContent = d.current_video || '—';
+
+  // Services
+  $('svc-ollama').innerHTML  = svcBadge(d.services?.ollama);
+  $('svc-tts').innerHTML     = svcBadge(d.services?.tts);
+  $('svc-whisper').innerHTML = svcBadge(d.services?.whisper);
+  $('svc-ffmpeg').innerHTML  = svcBadge(d.services?.ffmpeg);
+  $('svc-youtube').innerHTML = svcBadge(d.services?.youtube);
+  $('svc-codec').innerHTML   = svcBadge(d.services?.codec);
+  $('svc-model').textContent = d.services?.model || '—';
+
+  // Stats
+  $('stat-produced').textContent = d.stats?.produced  || 0;
+  $('stat-uploaded').textContent = d.stats?.uploaded  || 0;
+  $('stat-queue').textContent    = d.stats?.queue     || 0;
+  $('stat-cycles').textContent   = d.stats?.cycles    || 0;
+  $('stat-signals').textContent  = d.stats?.signals   || 0;
+  $('stat-last').textContent     = d.stats?.last_video || '—';
+  $('stat-score').textContent    = d.stats?.avg_score  || '—';
+
+  // Log
+  const logs = d.logs || [];
+  if (logs.length !== lastLogCount) {
+    lastLogCount = logs.length;
+    const box = $('log-box');
+    box.innerHTML = logs.slice(-120).map(l =>
+      `<div class="log-line ${classForLog(l)}">${escHtml(l)}</div>`
+    ).join('');
+    box.scrollTop = box.scrollHeight;
+  }
+
+  // Queue
+  const queue = d.queue || [];
+  if (queue.length) {
+    $('queue-list').innerHTML = queue.map(item => `
+      <div class="queue-item ${item.status === 'ready' ? 'ready' : 'pending'}">
+        <strong>${escHtml(item.title || '—')}</strong>
+        <span style="float:right;color:#666">${item.status || ''} &nbsp; score=${item.score || '?'}</span>
+      </div>`).join('');
+  }
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
