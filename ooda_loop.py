@@ -47,11 +47,18 @@ def run_cycle() -> None:
 
     print(f"[DECIDE] Winner: {best['title'][:70]} (score={best['ai_score']}/10)")
 
+    # Truncate story to ~150 words so video stays under 60 seconds
+    words = best["text"].split()
+    story = " ".join(words[:150])
+    if len(words) > 150:
+        story += "..."
+        print(f"[DECIDE] Story truncated to 150 words for Shorts length")
+
     # ── ACT ───────────────────────────────────────────────────────────────────
     print("\n[ACT] Producing video…")
     try:
         output = make_video(
-            story=best["text"],
+            story=story,
             title=best["title"],
             output="final_video.mp4",
             whisper_model=Config.WHISPER_MODEL,

@@ -57,10 +57,11 @@ class Config:
     voice_id:       str  = ""    # optional — kept for API compat (edge_tts ignores it)
     url:            str  = DEFAULT_URL
     output:         str  = "final_video.mp4"
-    font_size:      int  = 13
-    words_per_sub:  int  = 3
+    font_size:      int  = 90
+    words_per_sub:  int  = 2
     avoid_edge_secs: int = 60
     whisper_model:  str  = "base"
+    max_duration:   int  = 58   # hard cap — YouTube Shorts must be ≤60s
 
 # Alias so ooda / act code can also use VideoConfig name internally
 VideoConfig = Config
@@ -152,7 +153,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
-Style: Default,Arial,{fontsize},&H00FFFFFF,&H000000FF,&H00000000,&H64000000,1,0,0,0,100,100,0,0,1,4,2,5,30,30,0,1
+Style: Default,Arial Black,{fontsize},&H00FFFFFF,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,2,0,1,6,3,5,60,60,300,1
 
 [Events]
 Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
@@ -285,11 +286,12 @@ class Renderer:
             return "libx264"
 
     def render(self, footage: Path, audio: Path, subs: Path, output: Path) -> None:
-        audio_dur  = self._probe_duration(audio)
+        audio_dur  = min(self._probe_duration(audio), self.cfg.max_duration)
         mc_dur     = self._probe_duration(footage)
         avoid      = min(self.cfg.avoid_edge_secs, mc_dur * 0.1)
         max_start  = max(avoid, mc_dur - audio_dur - avoid)
         start_time = random.uniform(avoid, max_start)
+        print(f"  [Render] capping at {audio_dur:.0f}s")
 
         codec    = self._detect_video_codec()
         sub_path = self._safe_path(subs)
