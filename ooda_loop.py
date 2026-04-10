@@ -1,6 +1,7 @@
 """
 ooda_loop.py — Autonomous OODA cycle.
 Observe Reddit → Orient (AI score) → Decide (pick best) → Act (make video)
+Falls back to proven viral story bank when Reddit produces nothing good.
 Loops every 60 minutes. Runs forever with no manual steps.
 """
 
@@ -9,6 +10,7 @@ from config import Config
 from reddit_scraper import RedditScraper
 from orient import Orient
 from produce import make_video
+from story_bank import get_story
 
 VIABILITY_THRESHOLD = 7   # ai_score out of 10
 
@@ -39,13 +41,12 @@ def run_cycle() -> None:
     best = next((s for s in scored if s.get("ai_score", 0) >= VIABILITY_THRESHOLD), None)
 
     if not best:
-        top = scored[0] if scored else None
-        print(f"[DECIDE] No story scored >= {VIABILITY_THRESHOLD}.")
-        if top:
-            print(f"         Best available: {top['title'][:60]} (score={top['ai_score']})")
-        return
-
-    print(f"[DECIDE] Winner: {best['title'][:70]} (score={best['ai_score']}/10)")
+        print(f"[DECIDE] No Reddit story scored >= {VIABILITY_THRESHOLD} — using story bank")
+        best = get_story()
+        best["ai_score"] = 10   # bank stories are pre-vetted
+        best["text"] = best.get("text", "")
+    else:
+        print(f"[DECIDE] Reddit winner: {best['title'][:70]} (score={best['ai_score']}/10)")
 
     # Truncate story to ~150 words so video stays under 60 seconds
     words = best["text"].split()
