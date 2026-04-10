@@ -144,6 +144,7 @@ class WordCue:
 
 
 class SubtitleEngine:
+    # Clean, modern Shorts style — white text, thick black border, subtle shadow
     ASS_HEADER = """\
 [Script Info]
 ScriptType: v4.00+
@@ -153,13 +154,20 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
-Style: Default,Arial Black,{fontsize},&H00FFFFFF,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,2,0,1,6,3,5,60,60,300,1
+Style: Default,Arial Black,{fontsize},&H00FFFFFF,&H000000FF,&H00000000,&H96000000,1,0,0,0,100,100,4,0,1,7,2,5,80,80,320,1
 
 [Events]
 Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
 """
 
-    def __init__(self, font_size: int = 13, words_per_sub: int = 3):
+    # Flanking emojis — pick based on card index for variety
+    SIDE_EMOJIS = [
+        ("😤", "😤"), ("🔥", "🔥"), ("💀", "💀"), ("😱", "😱"),
+        ("⚡", "⚡"), ("💥", "💥"), ("👀", "👀"), ("😭", "😭"),
+        ("🚨", "🚨"), ("😤", "💀"), ("🔥", "😱"), ("⚡", "💥"),
+    ]
+
+    def __init__(self, font_size: int = 90, words_per_sub: int = 2):
         self.font_size     = font_size
         self.words_per_sub = words_per_sub
 
@@ -173,37 +181,52 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
 
     @staticmethod
     def _anim_tags(style: str) -> str:
-        if style == "pop":    return r"{\fscx130\fscy130\t(0,100,\fscx100\fscy100)}"
-        if style == "bounce": return r"{\fscx85\fscy85\t(0,70,\fscx115\fscy115)\t(70,140,\fscx100\fscy100)}"
-        if style == "zoom":   return r"{\fscx40\fscy40\t(0,130,\fscx100\fscy100)}"
-        if style == "slam":   return r"{\fscx160\fscy160\t(0,80,\fscx95\fscy95)\t(80,140,\fscx100\fscy100)}"
+        if style == "pop":    return r"{\fscx130\fscy130\t(0,80,\fscx100\fscy100)}"
+        if style == "bounce": return r"{\fscx80\fscy80\t(0,60,\fscx110\fscy110)\t(60,120,\fscx100\fscy100)}"
+        if style == "zoom":   return r"{\fscx30\fscy30\t(0,120,\fscx100\fscy100)}"
+        if style == "slam":   return r"{\fscx170\fscy170\t(0,70,\fscx95\fscy95)\t(70,130,\fscx100\fscy100)}"
         return ""
 
     @staticmethod
     def _inject_emoji(word: str) -> str:
         clean = word.lower().rstrip(".,!?;:")
         emoji = EMOJI_MAP.get(clean, "")
-        return f"{word} {emoji}" if emoji else word
+        return f"{word}{emoji}" if emoji else word
 
     def build(self, cues: list[WordCue], output_path: Path) -> None:
         header    = self.ASS_HEADER.format(fontsize=self.font_size)
         events    = []
         color_idx = 0
+
         for i in range(0, len(cues), self.words_per_sub):
             chunk = cues[i:i + self.words_per_sub]
             start = self._ass_time(chunk[0].start)
             end   = self._ass_time(chunk[-1].end)
+
             words = [c.text for c in chunk]
             words[0] = words[0].capitalize()
             words = [self._inject_emoji(w) for w in words]
             text  = " ".join(words).upper()
-            color = COLORS[color_idx % len(COLORS)]
-            anim  = self._anim_tags(random.choice(ANIMATIONS))
-            events.append(
+
+            # Flanking emojis on each side
+            left_e, right_e = self.SIDE_EMOJIS[color_idx % len(self.SIDE_EMOJIS)]
+
+            color    = COLORS[color_idx % len(COLORS)]
+            anim     = self._anim_tags(random.choice(ANIMATIONS))
+            color_tag = f"{{\\c{color}}}"
+
+            # Smaller emoji flanks — 60% of main font size
+            emoji_size = int(self.font_size * 0.6)
+            left_tag  = f"{{\\fs{emoji_size}\\c&H00FFFFFF&}}{left_e} "
+            right_tag = f" {{\\fs{emoji_size}\\c&H00FFFFFF&}}{right_e}"
+
+            line = (
                 f"Dialogue: 0,{start},{end},Default,,0,0,0,,"
-                f"{anim}{{\\c{color}}}{text}"
+                f"{anim}{left_tag}{{\\fs{self.font_size}}}{color_tag}{text}{right_tag}"
             )
+            events.append(line)
             color_idx += 1
+
         output_path.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
         print(f"  [Subs] {len(events)} cards → {output_path.name}")
 
