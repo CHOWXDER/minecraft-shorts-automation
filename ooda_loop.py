@@ -73,18 +73,21 @@ if __name__ == "__main__":
     from check_env import validate
     validate()
 
-    while True:
-        try:
-            run_cycle()
-        except Exception as e:
-            print(f"[LOOP] Cycle error: {e}")
+    try:
+        while True:
+            try:
+                run_cycle()
+            except Exception as e:
+                print(f"[LOOP] Cycle error: {e}")
 
-        wait = Config.CYCLE_INTERVAL_MINUTES * 60
-        print(f"\n{'='*52}")
-        print(f"  CYCLE DONE. Next in {Config.CYCLE_INTERVAL_MINUTES} min.")
-        print(f"  Video saved: final_video.mp4")
-        print(f"{'='*52}\n")
-        for remaining in range(wait, 0, -30):
-            mins, secs = divmod(remaining, 60)
-            print(f"  Next cycle in {mins:02d}:{secs:02d} ...  (Ctrl+C to stop)", end="\r")
-            time.sleep(30)
+            wait = Config.CYCLE_INTERVAL_MINUTES * 60
+            print(f"\n{'='*52}")
+            print(f"  CYCLE DONE. Next in {Config.CYCLE_INTERVAL_MINUTES} min.")
+            print(f"  Video saved: final_video.mp4")
+            print(f"{'='*52}\n")
+            for remaining in range(wait, 0, -30):
+                mins, secs = divmod(remaining, 60)
+                print(f"  Next cycle in {mins:02d}:{secs:02d} ...  (Ctrl+C to stop)", end="\r")
+                time.sleep(30)
+    except KeyboardInterrupt:
+        print("\n\n  Stopped. Bye.")
