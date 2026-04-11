@@ -70,7 +70,7 @@ def upload_video(
         creds   = _get_credentials()
         youtube = build("youtube", "v3", credentials=creds)
 
-        privacy = "scheduled" if scheduled_time else "private"
+        privacy = "public" if not scheduled_time else "scheduled"
         body    = {
             "snippet": {
                 "title":       title[:100],      # YouTube 100-char limit
