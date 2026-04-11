@@ -5,6 +5,7 @@ Falls back to proven viral story bank when Reddit produces nothing good.
 Loops every 60 minutes. Runs forever with no manual steps.
 """
 
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -74,6 +75,7 @@ def run_cycle() -> None:
             gta_url=Config.GTA_FOOTAGE_URL,
         )
         print(f"\n[ACT] Video ready: {output}")
+        os.startfile(os.path.abspath(output))
 
         upload_video(
             file=output,
