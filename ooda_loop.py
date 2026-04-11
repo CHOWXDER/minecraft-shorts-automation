@@ -76,9 +76,17 @@ def run_cycle() -> None:
 
         upload_video(
             file=output,
-            title=best["title"],
-            description=f"{best['title']}\n\n#Minecraft #Shorts #AITA #Reddit",
-            tags=["Minecraft", "Shorts", "AITA", "Reddit", "Story"],
+            title=best["title"][:100],
+            description=(
+                f"{best['title']}\n\n"
+                f"Drop your verdict in the comments.\n\n"
+                f"#Shorts #AITA #Reddit #RedditStories #RelationshipAdvice"
+            ),
+            tags=[
+                "reddit", "aita", "shorts", "reddit stories",
+                "relationship advice", "storytime", "drama",
+                "am i the asshole", "reddit drama",
+            ],
         )
     except Exception as e:
         print(f"[ACT] Production failed: {e}")

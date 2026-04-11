@@ -324,7 +324,12 @@ class Renderer:
         else:
             codec_flags = ["-c:v", "libx264", "-crf", "19", "-preset", "medium"]
 
-        vf = f"[0:v]crop=ih*9/16:ih,scale=1080:1920,ass={sub_path}[vout]"
+        vf = (
+            f"[0:v]crop=ih*9/16:ih,scale=1080:1920,"
+            f"eq=saturation=1.5:contrast=1.15:brightness=0.04,"
+            f"vignette=PI/4,"
+            f"ass={sub_path}[vout]"
+        )
         af = "[1:a]loudnorm=I=-14:LRA=11:TP=-1.5[a]"
 
         print(f"  [Render] {start_time:.1f}s → {start_time+audio_dur:.1f}s  codec={codec}")
