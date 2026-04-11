@@ -6,11 +6,17 @@ Loops every 60 minutes. Runs forever with no manual steps.
 """
 
 import time
+from datetime import datetime
+from pathlib import Path
 from config import Config
 from reddit_scraper import RedditScraper
 from orient import Orient
 from produce import make_video
 from story_bank import get_story
+from youtube_uploader import upload_video
+
+OUTPUT_DIR = Path("output")
+OUTPUT_DIR.mkdir(exist_ok=True)
 
 VIABILITY_THRESHOLD = 7   # ai_score out of 10
 
@@ -58,13 +64,22 @@ def run_cycle() -> None:
     # ── ACT ───────────────────────────────────────────────────────────────────
     print("\n[ACT] Producing video…")
     try:
+        timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = str(OUTPUT_DIR / f"video_{timestamp}.mp4")
         output = make_video(
             story=story,
             title=best["title"],
-            output="final_video.mp4",
+            output=output_path,
             whisper_model=Config.WHISPER_MODEL,
         )
         print(f"\n[ACT] Video ready: {output}")
+
+        upload_video(
+            file=output,
+            title=best["title"],
+            description=f"{best['title']}\n\n#Minecraft #Shorts #AITA #Reddit",
+            tags=["Minecraft", "Shorts", "AITA", "Reddit", "Story"],
+        )
     except Exception as e:
         print(f"[ACT] Production failed: {e}")
 
