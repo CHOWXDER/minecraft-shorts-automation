@@ -268,9 +268,9 @@ def ensure_footage(url: str, mc_path: Path) -> None:
     subprocess.run(
         [sys.executable, "-m", "yt_dlp",
          "--cookies-from-browser", "firefox",
-         "--js-runtimes", "node",
+         "--js-runtimes", r"node:C:\Program Files\nodejs\node.exe",
          "-o", str(mc_path),
-         "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+         "-f", "best[ext=mp4]/best",
          url],
         check=True,
     )
