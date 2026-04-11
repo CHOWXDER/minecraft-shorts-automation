@@ -338,9 +338,10 @@ class Renderer:
             gta_start = random.uniform(gta_avoid, max(gta_avoid, gta_dur - audio_dur - gta_avoid))
 
             # Top half: Minecraft (960px), Bottom half: GTA (960px) → 1080×1920
+            # scale to fill then crop — avoids squeezing regardless of source ratio
             vf = (
-                f"[0:v]crop=ih*9/16:ih,scale=1080:960[top];"
-                f"[2:v]crop=ih*9/16:ih,scale=1080:960[bot];"
+                f"[0:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[top];"
+                f"[2:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[bot];"
                 f"[top][bot]vstack=inputs=2,"
                 f"eq=saturation=1.5:contrast=1.15:brightness=0.04,"
                 f"vignette=PI/4,"
