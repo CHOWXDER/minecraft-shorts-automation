@@ -262,11 +262,13 @@ class WhisperEngine:
 
 def ensure_footage(url: str, mc_path: Path) -> None:
     if mc_path.exists():
-        print("  [Footage] using cached clip")
+        print(f"  [Footage] using cached {mc_path.name}")
         return
-    print("  [Footage] downloading…")
+    print(f"  [Footage] downloading {mc_path.name}…")
     subprocess.run(
         [sys.executable, "-m", "yt_dlp",
+         "--cookies-from-browser", "firefox",
+         "--js-interpreter", "nodejs",
          "-o", str(mc_path),
          "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
          url],
