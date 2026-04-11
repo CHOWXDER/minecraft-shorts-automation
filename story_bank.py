@@ -4,7 +4,11 @@ Used as fallback when Reddit produces nothing with score >= 7.
 Rotates through all 15 so every video is different.
 """
 
+import json
 import random
+from pathlib import Path
+
+_STATE_FILE = Path("temp/story_state.json")
 
 STORIES = [
     {
@@ -174,16 +178,25 @@ STORIES = [
     },
 ]
 
-_used: list[int] = []
+def _load_used() -> list[int]:
+    try:
+        return json.loads(_STATE_FILE.read_text())
+    except Exception:
+        return []
+
+def _save_used(used: list[int]) -> None:
+    _STATE_FILE.parent.mkdir(exist_ok=True)
+    _STATE_FILE.write_text(json.dumps(used))
 
 
 def get_story() -> dict:
-    """Return the next story, cycling through all 15 before repeating."""
-    global _used
-    available = [i for i in range(len(STORIES)) if i not in _used]
+    """Return the next story, cycling through all 15 before repeating. Persists across restarts."""
+    used = _load_used()
+    available = [i for i in range(len(STORIES)) if i not in used]
     if not available:
-        _used = []
+        used = []
         available = list(range(len(STORIES)))
     idx = random.choice(available)
-    _used.append(idx)
+    used.append(idx)
+    _save_used(used)
     return STORIES[idx]

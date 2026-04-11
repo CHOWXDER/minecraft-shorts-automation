@@ -414,11 +414,19 @@ class Producer:
         full_text  = f"{self.cfg.title}. {self.cfg.story}"
         audio_path = TEMP / "voiceover.mp3"
         subs_path  = TEMP / "subtitles.ass"
-        mc_path    = TEMP / "minecraft.mp4"
-        gta_path   = TEMP / "gta.mp4"
+        # Pick a random clip from temp/minecraft/ folder, fall back to temp/minecraft.mp4
+        mc_clips = sorted((TEMP / "minecraft").glob("*.mp4")) if (TEMP / "minecraft").exists() else []
+        mc_path  = random.choice(mc_clips) if mc_clips else TEMP / "minecraft.mp4"
+
+        gta_clips = sorted((TEMP / "gta").glob("*.mp4")) if (TEMP / "gta").exists() else []
+        gta_path  = random.choice(gta_clips) if gta_clips else TEMP / "gta.mp4"
 
         # Parallel: TTS + footage downloads
         print("\n[1/4] Acquiring assets (parallel TTS + footage)…")
+        if mc_clips:
+            print(f"  [Footage] picked {mc_path.name} from {len(mc_clips)} minecraft clips")
+        if gta_clips:
+            print(f"  [Footage] picked {gta_path.name} from {len(gta_clips)} gta clips")
         tts_err = []
         dl_err  = []
 
@@ -430,8 +438,9 @@ class Producer:
 
         def _dl():
             try:
-                ensure_footage(self.cfg.url, mc_path)
-                if self.cfg.gta_url:
+                if not mc_clips:
+                    ensure_footage(self.cfg.url, mc_path)
+                if self.cfg.gta_url and not gta_clips and not gta_path.exists():
                     ensure_footage(self.cfg.gta_url, gta_path)
             except Exception as e:
                 dl_err.append(e)
