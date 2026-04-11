@@ -17,7 +17,8 @@ from pathlib import Path
 TEMP  = Path("temp")
 CACHE = TEMP / "cache"
 
-DEFAULT_URL = "https://www.youtube.com/watch?v=85z7jqGAGcc"
+DEFAULT_URL     = "https://www.youtube.com/watch?v=85z7jqGAGcc"
+DEFAULT_GTA_URL = ""
 
 COLORS = [
     "&H0000FFFF",  # yellow
@@ -56,6 +57,7 @@ class Config:
     title:          str
     voice_id:       str  = ""    # optional — kept for API compat (edge_tts ignores it)
     url:            str  = DEFAULT_URL
+    gta_url:        str  = DEFAULT_GTA_URL
     output:         str  = "final_video.mp4"
     font_size:      int  = 90
     words_per_sub:  int  = 2
@@ -308,7 +310,8 @@ class Renderer:
             print("  [Render] No GPU → libx264")
             return "libx264"
 
-    def render(self, footage: Path, audio: Path, subs: Path, output: Path) -> None:
+    def render(self, footage: Path, audio: Path, subs: Path, output: Path,
+               gta: Path | None = None) -> None:
         audio_dur  = min(self._probe_duration(audio), self.cfg.max_duration)
         mc_dur     = self._probe_duration(footage)
         avoid      = min(self.cfg.avoid_edge_secs, mc_dur * 0.1)
@@ -324,21 +327,47 @@ class Renderer:
         else:
             codec_flags = ["-c:v", "libx264", "-crf", "19", "-preset", "medium"]
 
-        vf = (
-            f"[0:v]crop=ih*9/16:ih,scale=1080:1920,"
-            f"eq=saturation=1.5:contrast=1.15:brightness=0.04,"
-            f"vignette=PI/4,"
-            f"ass={sub_path}[vout]"
-        )
-        af = "[1:a]loudnorm=I=-14:LRA=11:TP=-1.5[a]"
+        split_screen = gta is not None and gta.exists()
 
-        print(f"  [Render] {start_time:.1f}s → {start_time+audio_dur:.1f}s  codec={codec}")
+        if split_screen:
+            # GTA start at a random point too
+            gta_dur   = self._probe_duration(gta)
+            gta_avoid = min(self.cfg.avoid_edge_secs, gta_dur * 0.1)
+            gta_start = random.uniform(gta_avoid, max(gta_avoid, gta_dur - audio_dur - gta_avoid))
+
+            # Top half: Minecraft (960px), Bottom half: GTA (960px) → 1080×1920
+            vf = (
+                f"[0:v]crop=ih*9/16:ih,scale=1080:960[top];"
+                f"[2:v]crop=ih*9/16:ih,scale=1080:960[bot];"
+                f"[top][bot]vstack=inputs=2,"
+                f"eq=saturation=1.5:contrast=1.15:brightness=0.04,"
+                f"vignette=PI/4,"
+                f"ass={sub_path}[vout]"
+            )
+            af  = "[1:a]loudnorm=I=-14:LRA=11:TP=-1.5[a]"
+            inputs = [
+                "-ss", str(start_time), "-t", str(audio_dur + 1), "-i", str(footage),
+                "-i", str(audio),
+                "-ss", str(gta_start), "-t", str(audio_dur + 1), "-i", str(gta),
+            ]
+            print(f"  [Render] split-screen ON  mc={start_time:.1f}s  gta={gta_start:.1f}s  codec={codec}")
+        else:
+            vf = (
+                f"[0:v]crop=ih*9/16:ih,scale=1080:1920,"
+                f"eq=saturation=1.5:contrast=1.15:brightness=0.04,"
+                f"vignette=PI/4,"
+                f"ass={sub_path}[vout]"
+            )
+            af  = "[1:a]loudnorm=I=-14:LRA=11:TP=-1.5[a]"
+            inputs = [
+                "-ss", str(start_time), "-t", str(audio_dur + 1), "-i", str(footage),
+                "-i", str(audio),
+            ]
+            print(f"  [Render] {start_time:.1f}s → {start_time+audio_dur:.1f}s  codec={codec}")
+
         try:
             subprocess.run(
-                ["ffmpeg", "-y",
-                 "-ss", str(start_time), "-t", str(audio_dur + 1),
-                 "-i", str(footage),
-                 "-i", str(audio),
+                ["ffmpeg", "-y", *inputs,
                  "-filter_complex", f"{vf};{af}",
                  "-map", "[vout]", "-map", "[a]",
                  *codec_flags,
@@ -383,8 +412,9 @@ class Producer:
         audio_path = TEMP / "voiceover.mp3"
         subs_path  = TEMP / "subtitles.ass"
         mc_path    = TEMP / "minecraft.mp4"
+        gta_path   = TEMP / "gta.mp4"
 
-        # Parallel: TTS + footage download
+        # Parallel: TTS + footage downloads
         print("\n[1/4] Acquiring assets (parallel TTS + footage)…")
         tts_err = []
         dl_err  = []
@@ -398,6 +428,8 @@ class Producer:
         def _dl():
             try:
                 ensure_footage(self.cfg.url, mc_path)
+                if self.cfg.gta_url:
+                    ensure_footage(self.cfg.gta_url, gta_path)
             except Exception as e:
                 dl_err.append(e)
 
@@ -419,8 +451,20 @@ class Producer:
         print("\n[3/4] Building subtitles…")
         self.subs.build(cues, subs_path)
 
+        gta = gta_path if gta_path.exists() else None
+        if gta:
+            print("  [Subs] adjusting margins for split-screen…")
+            # Rewrite subtitle file with adjusted vertical margin for split screen
+            content = subs_path.read_text(encoding="utf-8")
+            # Move subtitles to center seam (MarginV 320 → 0 centers them at split line)
+            content = content.replace(
+                "Style: Default,Arial Black",
+                "Style: Default,Arial Black"
+            ).replace(",80,80,320,1", ",80,80,10,1")
+            subs_path.write_text(content, encoding="utf-8")
+
         print("\n[4/4] Rendering…")
-        self.renderer.render(mc_path, audio_path, subs_path, Path(self.cfg.output))
+        self.renderer.render(mc_path, audio_path, subs_path, Path(self.cfg.output), gta=gta)
         print(f"\n  Done → {self.cfg.output}")
 
 
@@ -432,12 +476,13 @@ def make_video(
     output:        str,
     voice_id:      str = "",
     url:           str = DEFAULT_URL,
+    gta_url:       str = "",
     whisper_model: str = "base",
 ) -> str:
     """Called by ooda_loop.py — returns output path on success."""
     cfg = Config(
         story=story, title=title, voice_id=voice_id,
-        url=url, output=output, whisper_model=whisper_model,
+        url=url, gta_url=gta_url, output=output, whisper_model=whisper_model,
     )
     Producer(cfg).run()
     return output

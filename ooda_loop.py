@@ -71,6 +71,7 @@ def run_cycle() -> None:
             title=best["title"],
             output=output_path,
             whisper_model=Config.WHISPER_MODEL,
+            gta_url=Config.GTA_FOOTAGE_URL,
         )
         print(f"\n[ACT] Video ready: {output}")
 
