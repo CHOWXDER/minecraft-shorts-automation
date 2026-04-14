@@ -94,28 +94,27 @@ class TTSEngine:
             shutil.copy(cache_mp3, audio_path)
             return
 
-        # Optional ElevenLabs if key provided
+        # Optional ElevenLabs if key provided — direct REST API, no SDK
         if self.api_key:
-            import base64, time as _time
+            import requests as _req, time as _time
             print("  [TTS] calling ElevenLabs…")
             for attempt in range(3):
                 try:
-                    from elevenlabs.client import ElevenLabs
-                    client   = ElevenLabs(api_key=self.api_key)
-                    response = client.text_to_speech.convert_with_timestamps(
-                        voice_id=self.voice_id,
-                        text=text,
-                        model_id="eleven_multilingual_v2",
-                        output_format="mp3_44100_128",
+                    url  = f"https://api.elevenlabs.io/v1/text-to-speech/{self.voice_id}"
+                    resp = _req.post(url,
+                        headers={"xi-api-key": self.api_key, "Content-Type": "application/json"},
+                        json={"text": text, "model_id": "eleven_multilingual_v2",
+                              "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}},
+                        timeout=60,
                     )
-                    audio_bytes = base64.b64decode(response.audio_base_64)
-                    audio_path.write_bytes(audio_bytes)
-                    cache_mp3.write_bytes(audio_bytes)
+                    resp.raise_for_status()
+                    audio_path.write_bytes(resp.content)
+                    cache_mp3.write_bytes(resp.content)
                     print("  [TTS] ElevenLabs audio written")
                     return
                 except Exception as exc:
                     wait = 2 ** attempt
-                    print(f"  [TTS] attempt {attempt+1} failed: {exc!s:.80} — retry in {wait}s")
+                    print(f"  [TTS] attempt {attempt+1} failed: {exc!s:.120} — retry in {wait}s")
                     _time.sleep(wait)
             print("  [TTS] ElevenLabs failed — falling back to edge_tts")
 
