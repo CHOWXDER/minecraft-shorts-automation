@@ -345,7 +345,11 @@ class Renderer:
                 f"[top][bot]vstack=inputs=2,"
                 f"eq=saturation=1.5:contrast=1.15:brightness=0.04,"
                 f"vignette=PI/4,"
-                f"ass={sub_path}[vout]"
+                f"ass={sub_path},"
+                f"drawtext=text='FOLLOW FOR MORE ↑':fontcolor=white:fontsize=50:fontfile='C\\:/Windows/Fonts/arialbd.ttf':"
+                f"x=(w-text_w)/2:y=h-120:"
+                f"enable='gte(t,{audio_dur-3})':"
+                f"box=1:boxcolor=black@0.5:boxborderw=10[vout]"
             )
             af  = "[1:a]loudnorm=I=-14:LRA=11:TP=-1.5[a]"
             inputs = [
@@ -359,7 +363,11 @@ class Renderer:
                 f"[0:v]crop=ih*9/16:ih,scale=1080:1920,"
                 f"eq=saturation=1.5:contrast=1.15:brightness=0.04,"
                 f"vignette=PI/4,"
-                f"ass={sub_path}[vout]"
+                f"ass={sub_path},"
+                f"drawtext=text='FOLLOW FOR MORE ↑':fontcolor=white:fontsize=50:fontfile='C\\:/Windows/Fonts/arialbd.ttf':"
+                f"x=(w-text_w)/2:y=h-120:"
+                f"enable='gte(t,{audio_dur-3})':"
+                f"box=1:boxcolor=black@0.5:boxborderw=10[vout]"
             )
             af  = "[1:a]loudnorm=I=-14:LRA=11:TP=-1.5[a]"
             inputs = [
@@ -411,7 +419,7 @@ class Producer:
         TEMP.mkdir(exist_ok=True)
         CACHE.mkdir(exist_ok=True)
 
-        full_text  = f"{self.cfg.title}. {self.cfg.story}"
+        full_text  = self.cfg.story  # skip title prefix — jump straight into drama
         audio_path = TEMP / "voiceover.mp3"
         subs_path  = TEMP / "subtitles.ass"
         # Pick a random clip from temp/minecraft/ folder, fall back to temp/minecraft.mp4

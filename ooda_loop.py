@@ -77,18 +77,22 @@ def run_cycle() -> None:
         print(f"\n[ACT] Video ready: {output}")
         os.startfile(os.path.abspath(output))
 
+        preview = " ".join(story.split()[:20]) + "..."
         upload_video(
             file=output,
             title=best["title"][:100],
             description=(
                 f"{best['title']}\n\n"
-                f"Drop your verdict in the comments.\n\n"
-                f"#Shorts #AITA #Reddit #RedditStories #RelationshipAdvice"
+                f"{preview}\n\n"
+                f"Drop your verdict in the comments 👇\n\n"
+                f"🔔 Follow for daily Reddit drama\n\n"
+                f"#Shorts #AITA #Reddit #RedditStories #RelationshipAdvice "
+                f"#AmITheAsshole #Drama #Storytime #RedditDrama #Viral"
             ),
             tags=[
-                "reddit", "aita", "shorts", "reddit stories",
-                "relationship advice", "storytime", "drama",
-                "am i the asshole", "reddit drama",
+                "reddit", "aita", "am i the asshole", "shorts", "reddit stories",
+                "relationship advice", "storytime", "drama", "reddit drama",
+                "viral", "reddit shorts", "aita reddit", "reddit storytime",
             ],
         )
     except Exception as e:
