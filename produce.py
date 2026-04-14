@@ -72,11 +72,12 @@ VideoConfig = Config
 # ── TTS ───────────────────────────────────────────────────────────────────────
 
 class TTSEngine:
-    FALLBACK_VOICE = "en-US-ChristopherNeural"
+    FALLBACK_VOICE    = "en-US-ChristopherNeural"   # edge_tts
+    ELEVENLABS_VOICE  = "pNInz6obpgDQGcFmaJgB"      # Adam — deep male voice
 
     def __init__(self, api_key: str = "", voice_id: str = ""):
         self.api_key  = api_key
-        self.voice_id = voice_id or self.FALLBACK_VOICE
+        self.voice_id = voice_id or self.ELEVENLABS_VOICE
 
     def _cache_key(self, text: str) -> str:
         import hashlib
