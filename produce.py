@@ -408,7 +408,7 @@ class Renderer:
 class Producer:
     def __init__(self, cfg: Config):
         self.cfg      = cfg
-        api_key       = os.getenv("ELEVENLABS_API_KEY", "")
+        api_key       = os.getenv("ELEVENLABS_API_KEY", "").strip()
         self.tts      = TTSEngine(api_key, cfg.voice_id)
         self.whisper  = WhisperEngine(cfg.whisper_model)
         self.subs     = SubtitleEngine(cfg.font_size, cfg.words_per_sub)
