@@ -176,6 +176,153 @@ STORIES = [
             "furious. Apparently HR is now investigating. I slept like a baby."
         ),
     },
+    {
+        "title": "I uninvited my parents from my wedding and don't regret it",
+        "text": (
+            "They told me my fiancé wasn't good enough for our family two weeks before the wedding. "
+            "Said it at dinner, in front of him. He just sat there. I looked at my mom and said "
+            "you're no longer invited. She laughed like I was joking. I wasn't. They showed up to "
+            "the venue anyway. Security turned them away. My siblings are furious. My aunt called me "
+            "a monster. My husband cried when I told him why I did it. That made it worth everything."
+        ),
+    },
+    {
+        "title": "I recorded my coworker stealing and sent it to everyone",
+        "text": (
+            "She'd been taking credit for my reports for six months. My manager kept praising her "
+            "in meetings while I sat there building everything she presented. So I set up my laptop "
+            "camera and recorded her downloading my files and putting her name on them. I didn't go "
+            "to HR. I forwarded the video to the entire team including the director. She was walked "
+            "out that afternoon. People keep asking if I feel bad. I don't. Not even a little."
+        ),
+    },
+    {
+        "title": "My husband forgot our anniversary for the third year in a row",
+        "text": (
+            "I didn't remind him. I didn't hint. I wanted to see if he'd remember on his own. He "
+            "didn't. He came home and asked what was for dinner like it was any other Tuesday. I'd "
+            "spent the week wondering if I was being unfair. I wasn't. Ten years of marriage and he "
+            "can't remember one day. I told him calmly that I'd been thinking about this for a while "
+            "and I think we need to talk about whether we still want the same things. He finally "
+            "looked up from his phone."
+        ),
+    },
+    {
+        "title": "I cut off my brother after what he did at our dad's funeral",
+        "text": (
+            "Dad died in March. At the reception my brother stood up and gave a speech about how "
+            "dad always loved him more and how the rest of us were jealous. At a funeral. In front "
+            "of sixty people. My mom started crying. I walked over, took the microphone, and said "
+            "this isn't the time or the place and sat him down. He hasn't spoken to me since and "
+            "honestly that's fine. Grief doesn't give you permission to humiliate your family."
+        ),
+    },
+    {
+        "title": "I caught my boyfriend of four years on a dating app",
+        "text": (
+            "His phone buzzed while he was in the shower. I wasn't snooping — it was face up on "
+            "the counter and the notification showed a match notification from Hinge. I didn't "
+            "confront him right away. I made a fake profile, matched with him, and had a full "
+            "conversation where he told my fake profile he was single and looking for something "
+            "serious. I screenshotted everything. Then I sent it to him from my real number. "
+            "He called immediately. I didn't pick up."
+        ),
+    },
+    {
+        "title": "I told my sister the truth about her husband and she chose him",
+        "text": (
+            "For two years I watched him talk down to her in public. Little comments. Corrections. "
+            "Sighs when she spoke. I finally sat her down and told her everything I'd observed. "
+            "She went home and told him. He told her I was jealous of their relationship. She "
+            "called me the next day and said she thinks I need to apologize. I said I'd rather "
+            "never see either of them again. She said then don't come to Christmas. I said okay."
+        ),
+    },
+    {
+        "title": "I refused to give my inheritance to my siblings and they hate me",
+        "text": (
+            "My grandmother left everything specifically to me. Not split equally — just me. My "
+            "siblings are convinced I manipulated her. I didn't. She and I were close for thirty "
+            "years. I visited every week. They visited at Christmas. When the will was read my "
+            "brother actually stood up and said this can't be right. I didn't argue. I didn't "
+            "explain. I just left. They've been sending emails ever since. I've read none of them."
+        ),
+    },
+    {
+        "title": "I exposed my friend group's group chat to the person they were talking about",
+        "text": (
+            "They'd been mocking her for months. Her clothes, her boyfriend, her job. I was in "
+            "the chat but never participated. One day they went too far — someone posted a photo "
+            "of her from a party and everyone piled on. I screenshotted the whole thread and "
+            "sent it to her anonymously. Then I left the group. She confronted them the next day. "
+            "Three of them know it was me. They're calling me a traitor. I'd do it again."
+        ),
+    },
+    {
+        "title": "I walked out of my own baby shower",
+        "text": (
+            "My mother-in-law planned it without asking me. Invited people I don't know. Chose a "
+            "theme I hate. Didn't invite my best friend because she quote doesn't fit in with the "
+            "family. I arrived, looked around, and fifteen minutes later I told my husband I was "
+            "leaving. He asked me to stay for appearances. I said no and drove to my best friend's "
+            "house. We ordered food and watched movies. It was the best baby shower I could have "
+            "asked for. My mother-in-law hasn't spoken to me since."
+        ),
+    },
+    {
+        "title": "I told my dad I don't want him at my graduation",
+        "text": (
+            "He missed every important thing. School plays. Sports. My mom's surgery. He always "
+            "had a reason. When I got into grad school I called to tell him and he was too busy "
+            "to talk. So when graduation came I sent him a card that said I love you but I need "
+            "this day to be about people who showed up. He called crying. Said I was punishing him "
+            "for working hard. I said no, I'm protecting myself from being disappointed again. "
+            "He didn't come. It was peaceful."
+        ),
+    },
+    {
+        "title": "I returned my engagement ring and left the country",
+        "text": (
+            "He proposed in front of his entire family before asking me privately. I said yes "
+            "because fifty people were watching. Three days later I gave the ring back and "
+            "told him I needed him to actually ask me properly when it was just the two of us. "
+            "He told his family I rejected him. They bombarded me with messages. So I booked a "
+            "flight to Portugal, turned off my phone, and spent two weeks alone. When I came back "
+            "he had moved his things out. I considered that my real answer."
+        ),
+    },
+    {
+        "title": "I told my mom her new husband makes me uncomfortable and she chose him",
+        "text": (
+            "He comments on what I eat. How I dress. How much I weigh. Always framed as concern. "
+            "I told my mom six months ago that I wasn't comfortable being around him. She said I "
+            "was being dramatic and that he's just old fashioned. Last month she told me he'd be "
+            "moving into the house I grew up in. I told her I wouldn't be visiting anymore. She "
+            "said that's your choice. It is. And I'm at peace with it."
+        ),
+    },
+    {
+        "title": "I filed a noise complaint against my neighbor and things escalated",
+        "text": (
+            "Music every night until two AM. I knocked on the door three times over two months. "
+            "Polite every time. Nothing changed. So I called the city and filed a formal complaint. "
+            "They got a fine. Now they park in front of my driveway, leave garbage near my door, "
+            "and stare at me when I leave for work. I've documented everything. Filed two more "
+            "complaints. My other neighbors think I started it. I have thirty days of audio "
+            "recordings that say otherwise."
+        ),
+    },
+    {
+        "title": "I didn't tell my family I got promoted and I'm glad",
+        "text": (
+            "Last time I shared good news my brother immediately talked about his own job. My mom "
+            "asked if the money would help me pay off my mistakes. My dad said don't let it go to "
+            "your head. So when I got promoted to director I told my friends and my therapist. "
+            "Not my family. Three months later my cousin mentioned it at a holiday dinner — she'd "
+            "seen it on LinkedIn. The table went silent. My mom said why didn't you tell us. "
+            "I said I didn't think you'd be interested. Nobody argued."
+        ),
+    },
 ]
 
 def _load_used() -> list[int]:

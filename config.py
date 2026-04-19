@@ -10,6 +10,6 @@ class Config:
     GTA_FOOTAGE_URL          = os.getenv("GTA_FOOTAGE_URL", "")
     WHISPER_MODEL            = os.getenv("WHISPER_MODEL", "base")
     OUTPUT_DIR               = os.getenv("OUTPUT_DIR", "output")
-    SUBREDDITS               = ["Minecraft", "MinecraftStories", "mcservers"]
+    SUBREDDITS               = ["AmItheAsshole", "relationship_advice", "tifu", "offmychest", "confessions"]
     MIN_SCORE                = 500
     CYCLE_INTERVAL_MINUTES   = 60
