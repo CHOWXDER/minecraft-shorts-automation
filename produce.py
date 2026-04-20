@@ -17,6 +17,38 @@ from pathlib import Path
 TEMP  = Path("temp")
 CACHE = TEMP / "cache"
 
+
+# ── MODULE-LEVEL HELPERS ──────────────────────────────────────────────────────
+
+def _probe_duration(path: Path) -> float:
+    r = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+        capture_output=True, text=True, check=True,
+    )
+    return float(r.stdout.strip())
+
+
+def _concat_audio(parts: list[Path], output: Path) -> None:
+    if len(parts) == 1:
+        import shutil
+        shutil.copy(parts[0], output)
+        return
+    list_file = TEMP / "concat_list.txt"
+    list_file.write_text("\n".join(f"file '{p.resolve()}'" for p in parts), encoding="utf-8")
+    subprocess.run(
+        ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(list_file),
+         "-c", "copy", str(output)],
+        check=True, capture_output=True,
+    )
+
+
+def _build_enable(windows: list[tuple[float, float]]) -> str:
+    if not windows:
+        return "0"
+    return "+".join(f"between(t,{s:.3f},{e:.3f})" for s, e in windows)
+
+
 DEFAULT_URL     = "https://www.youtube.com/watch?v=85z7jqGAGcc"
 DEFAULT_GTA_URL = ""
 
@@ -79,14 +111,16 @@ class TTSEngine:
         self.api_key  = api_key
         self.voice_id = voice_id or self.ELEVENLABS_VOICE
 
-    def _cache_key(self, text: str) -> str:
+    def _cache_key(self, text: str, voice_id: str = "") -> str:
         import hashlib
-        return hashlib.md5(f"{text}:{self.voice_id}:v3".encode()).hexdigest()
+        v = voice_id or self.voice_id
+        return hashlib.md5(f"{text}:{v}:v3".encode()).hexdigest()
 
-    def generate(self, text: str, audio_path: Path) -> None:
+    def generate(self, text: str, audio_path: Path, voice_id: str = "") -> None:
         import shutil
+        effective_voice = voice_id or self.voice_id
         CACHE.mkdir(parents=True, exist_ok=True)
-        key       = self._cache_key(text)
+        key       = self._cache_key(text, effective_voice)
         cache_mp3 = CACHE / f"{key}.mp3"
 
         if cache_mp3.exists():
@@ -97,10 +131,10 @@ class TTSEngine:
         # Optional ElevenLabs if key provided — direct REST API, no SDK
         if self.api_key:
             import requests as _req, time as _time
-            print("  [TTS] calling ElevenLabs…")
+            print(f"  [TTS] calling ElevenLabs (voice={effective_voice[:8]}…)")
             for attempt in range(3):
                 try:
-                    url  = f"https://api.elevenlabs.io/v1/text-to-speech/{self.voice_id}"
+                    url  = f"https://api.elevenlabs.io/v1/text-to-speech/{effective_voice}"
                     resp = _req.post(url,
                         headers={"xi-api-key": self.api_key, "Content-Type": "application/json"},
                         json={"text": text, "model_id": "eleven_multilingual_v2",
@@ -313,9 +347,14 @@ class Renderer:
             return "libx264"
 
     def render(self, footage: Path, audio: Path, subs: Path, output: Path,
-               gta: Path | None = None) -> None:
-        audio_dur  = min(self._probe_duration(audio), self.cfg.max_duration)
-        mc_dur     = self._probe_duration(footage)
+               gta: Path | None = None,
+               narrator_png: Path | None = None,
+               other_png:    Path | None = None,
+               narrator_windows: list | None = None,
+               other_windows:    list | None = None) -> None:
+
+        audio_dur  = min(_probe_duration(audio), self.cfg.max_duration)
+        mc_dur     = _probe_duration(footage)
         avoid      = min(self.cfg.avoid_edge_secs, mc_dur * 0.1)
         max_start  = max(avoid, mc_dur - audio_dur - avoid)
         start_time = random.uniform(avoid, max_start)
@@ -330,56 +369,71 @@ class Renderer:
             codec_flags = ["-c:v", "libx264", "-crf", "19", "-preset", "medium"]
 
         split_screen = gta is not None and gta.exists()
+        has_chars    = bool(narrator_png and narrator_png.exists() and
+                            other_png and other_png.exists())
+
+        follow_dt = (
+            f"drawtext=text='FOLLOW FOR MORE ↑':fontcolor=white:fontsize=50:"
+            f"fontfile='C\\:/Windows/Fonts/arialbd.ttf':"
+            f"x=(w-text_w)/2:y=h-120:enable='gte(t,{audio_dur-3})':"
+            f"box=1:boxcolor=black@0.5:boxborderw=10"
+        )
 
         if split_screen:
-            # GTA start at a random point too
-            gta_dur   = self._probe_duration(gta)
+            gta_dur   = _probe_duration(gta)
             gta_avoid = min(self.cfg.avoid_edge_secs, gta_dur * 0.1)
             gta_start = random.uniform(gta_avoid, max(gta_avoid, gta_dur - audio_dur - gta_avoid))
-
-            # Top half: Minecraft (960px), Bottom half: GTA (960px) → 1080×1920
-            # scale to fill then crop — avoids squeezing regardless of source ratio
-            vf = (
-                f"[0:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[top];"
-                f"[2:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[bot];"
-                f"[top][bot]vstack=inputs=2,"
-                f"eq=saturation=1.5:contrast=1.15:brightness=0.04,"
-                f"vignette=PI/4,"
-                f"ass={sub_path},"
-                f"drawtext=text='FOLLOW FOR MORE ↑':fontcolor=white:fontsize=50:fontfile='C\\:/Windows/Fonts/arialbd.ttf':"
-                f"x=(w-text_w)/2:y=h-120:"
-                f"enable='gte(t,{audio_dur-3})':"
-                f"box=1:boxcolor=black@0.5:boxborderw=10[vout]"
-            )
-            af  = "[1:a]loudnorm=I=-14:LRA=11:TP=-1.5[a]"
             inputs = [
                 "-ss", str(start_time), "-t", str(audio_dur + 1), "-i", str(footage),
                 "-i", str(audio),
                 "-ss", str(gta_start), "-t", str(audio_dur + 1), "-i", str(gta),
             ]
-            print(f"  [Render] split-screen ON  mc={start_time:.1f}s  gta={gta_start:.1f}s  codec={codec}")
-        else:
-            vf = (
-                f"[0:v]crop=ih*9/16:ih,scale=1080:1920,"
-                f"eq=saturation=1.5:contrast=1.15:brightness=0.04,"
-                f"vignette=PI/4,"
-                f"ass={sub_path},"
-                f"drawtext=text='FOLLOW FOR MORE ↑':fontcolor=white:fontsize=50:fontfile='C\\:/Windows/Fonts/arialbd.ttf':"
-                f"x=(w-text_w)/2:y=h-120:"
-                f"enable='gte(t,{audio_dur-3})':"
-                f"box=1:boxcolor=black@0.5:boxborderw=10[vout]"
+            char_base_idx = 3
+            base_fc = (
+                f"[0:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[top];"
+                f"[2:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[bot];"
+                f"[top][bot]vstack=inputs=2[stacked];"
+                f"[stacked]eq=saturation=1.5:contrast=1.15:brightness=0.04,vignette=PI/4[graded]"
             )
-            af  = "[1:a]loudnorm=I=-14:LRA=11:TP=-1.5[a]"
+            print(f"  [Render] split-screen  mc={start_time:.1f}s  gta={gta_start:.1f}s  codec={codec}")
+        else:
             inputs = [
                 "-ss", str(start_time), "-t", str(audio_dur + 1), "-i", str(footage),
                 "-i", str(audio),
             ]
+            char_base_idx = 2
+            base_fc = (
+                f"[0:v]crop=ih*9/16:ih,scale=1080:1920,"
+                f"eq=saturation=1.5:contrast=1.15:brightness=0.04,vignette=PI/4[graded]"
+            )
             print(f"  [Render] {start_time:.1f}s → {start_time+audio_dur:.1f}s  codec={codec}")
+
+        if has_chars:
+            narrator_en = _build_enable(narrator_windows or [])
+            other_en    = _build_enable(other_windows or [])
+            ni = char_base_idx
+            oi = char_base_idx + 1
+            inputs += [
+                "-loop", "1", "-t", str(audio_dur + 2), "-i", str(narrator_png),
+                "-loop", "1", "-t", str(audio_dur + 2), "-i", str(other_png),
+            ]
+            # Overlay characters in bottom corners, above the "follow" text
+            char_fc = (
+                f"[graded][{ni}:v]overlay=x=10:y=H-h-140:format=auto:enable='{narrator_en}'[v1];"
+                f"[v1][{oi}:v]overlay=x=W-w-10:y=H-h-140:format=auto:enable='{other_en}'[v2];"
+                f"[v2]ass={sub_path},{follow_dt}[vout]"
+            )
+            print(f"  [Render] characters ON  narrator_segs={len(narrator_windows or [])}  other_segs={len(other_windows or [])}")
+        else:
+            char_fc = f"[graded]ass={sub_path},{follow_dt}[vout]"
+
+        af = "[1:a]loudnorm=I=-14:LRA=11:TP=-1.5[a]"
+        fc = f"{base_fc};{char_fc};{af}"
 
         try:
             subprocess.run(
                 ["ffmpeg", "-y", *inputs,
-                 "-filter_complex", f"{vf};{af}",
+                 "-filter_complex", fc,
                  "-map", "[vout]", "-map", "[a]",
                  *codec_flags,
                  "-pix_fmt", "yuv420p",
@@ -407,11 +461,11 @@ class Renderer:
 
 class Producer:
     def __init__(self, cfg: Config):
-        self.cfg      = cfg
-        api_key       = os.getenv("ELEVENLABS_API_KEY", "").strip()
-        if api_key:
-            print(f"  [TTS] key loaded: {api_key[:8]}...{api_key[-4:]}")
-        self.tts      = TTSEngine(api_key, cfg.voice_id)
+        self.cfg     = cfg
+        self.api_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
+        if self.api_key:
+            print(f"  [TTS] key loaded: {self.api_key[:8]}...{self.api_key[-4:]}")
+        self.tts      = TTSEngine(self.api_key, cfg.voice_id)
         self.whisper  = WhisperEngine(cfg.whisper_model)
         self.subs     = SubtitleEngine(cfg.font_size, cfg.words_per_sub)
         self.renderer = Renderer(cfg)
@@ -421,28 +475,47 @@ class Producer:
         TEMP.mkdir(exist_ok=True)
         CACHE.mkdir(exist_ok=True)
 
-        full_text  = self.cfg.story  # skip title prefix — jump straight into drama
-        audio_path = TEMP / "voiceover.mp3"
-        subs_path  = TEMP / "subtitles.ass"
-        # Pick a random clip from temp/minecraft/ folder, fall back to temp/minecraft.mp4
-        mc_clips = sorted((TEMP / "minecraft").glob("*.mp4")) if (TEMP / "minecraft").exists() else []
-        mc_path  = random.choice(mc_clips) if mc_clips else TEMP / "minecraft.mp4"
-
+        # Footage paths
+        mc_clips  = sorted((TEMP / "minecraft").glob("*.mp4")) if (TEMP / "minecraft").exists() else []
+        mc_path   = random.choice(mc_clips) if mc_clips else TEMP / "minecraft.mp4"
         gta_clips = sorted((TEMP / "gta").glob("*.mp4")) if (TEMP / "gta").exists() else []
         gta_path  = random.choice(gta_clips) if gta_clips else TEMP / "gta.mp4"
-
-        # Parallel: TTS + footage downloads
-        print("\n[1/4] Acquiring assets (parallel TTS + footage)…")
         if mc_clips:
             print(f"  [Footage] picked {mc_path.name} from {len(mc_clips)} minecraft clips")
         if gta_clips:
             print(f"  [Footage] picked {gta_path.name} from {len(gta_clips)} gta clips")
-        tts_err = []
-        dl_err  = []
+
+        # ── 1. Parse story into speaker segments + generate character images ──
+        print("\n[1/4] Parsing story + generating characters…")
+        from story_parser import parse_segments
+        from character_gen import ensure_characters
+        segments      = parse_segments(self.cfg.story)
+        narrator_png, other_png = ensure_characters()
+
+        # ── 2. Multi-voice TTS + footage download (parallel) ──────────────────
+        print("\n[2/4] Acquiring assets (TTS + footage)…")
+        audio_path       = TEMP / "voiceover.mp3"
+        narrator_windows: list[tuple[float, float]] = []
+        other_windows:    list[tuple[float, float]] = []
+        tts_err: list    = []
+        dl_err:  list    = []
 
         def _tts():
             try:
-                self.tts.generate(full_text, audio_path)
+                cursor = 0.0
+                parts  = []
+                for i, seg in enumerate(segments):
+                    seg_path = TEMP / f"seg_{i}.mp3"
+                    self.tts.generate(seg["text"], seg_path, seg["voice_id"])
+                    dur = _probe_duration(seg_path)
+                    window = (cursor, cursor + dur)
+                    if seg["speaker"] == "other":
+                        other_windows.append(window)
+                    else:
+                        narrator_windows.append(window)
+                    parts.append(seg_path)
+                    cursor += dur
+                _concat_audio(parts, audio_path)
             except Exception as e:
                 tts_err.append(e)
 
@@ -465,28 +538,30 @@ class Producer:
         if not mc_path.exists():
             sys.exit(f"[ERROR] Footage missing. {dl_err[0] if dl_err else 'Place minecraft.mp4 in temp/.'}")
 
-        print("\n[2/4] Whisper caption sync…")
+        # ── 3. Whisper + subtitles ─────────────────────────────────────────────
+        print("\n[3/4] Whisper caption sync + subtitles…")
+        subs_path = TEMP / "subtitles.ass"
         cues = self.whisper.transcribe(audio_path)
         if not cues:
             sys.exit("[ERROR] Whisper returned no word cues")
-
-        print("\n[3/4] Building subtitles…")
         self.subs.build(cues, subs_path)
 
         gta = gta_path if gta_path.exists() else None
         if gta:
-            print("  [Subs] adjusting margins for split-screen…")
-            # Rewrite subtitle file with adjusted vertical margin for split screen
             content = subs_path.read_text(encoding="utf-8")
-            # Move subtitles to center seam (MarginV 320 → 0 centers them at split line)
-            content = content.replace(
-                "Style: Default,Arial Black",
-                "Style: Default,Arial Black"
-            ).replace(",80,80,320,1", ",80,80,10,1")
+            content = content.replace(",80,80,320,1", ",80,80,10,1")
             subs_path.write_text(content, encoding="utf-8")
 
+        # ── 4. Render with character overlays ─────────────────────────────────
         print("\n[4/4] Rendering…")
-        self.renderer.render(mc_path, audio_path, subs_path, Path(self.cfg.output), gta=gta)
+        self.renderer.render(
+            mc_path, audio_path, subs_path, Path(self.cfg.output),
+            gta=gta,
+            narrator_png=narrator_png,
+            other_png=other_png,
+            narrator_windows=narrator_windows,
+            other_windows=other_windows,
+        )
         print(f"\n  Done → {self.cfg.output}")
 
 
