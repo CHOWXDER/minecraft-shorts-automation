@@ -19,7 +19,7 @@ from youtube_uploader import upload_video
 OUTPUT_DIR = Path("output")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-VIABILITY_THRESHOLD = 7   # ai_score out of 10
+VIABILITY_THRESHOLD = 4   # ai_score out of 10
 
 
 def run_cycle() -> None:

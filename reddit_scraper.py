@@ -51,11 +51,12 @@ class RedditScraper:
                 if text in ("[removed]", "[deleted]", ""):
                     continue
                 results.append({
-                    "title":     p.get("title", ""),
-                    "text":      text,
-                    "score":     p.get("score", 0),
-                    "subreddit": subreddit_name,
-                    "url":       p.get("url", ""),
+                    "title":        p.get("title", ""),
+                    "text":         text,
+                    "score":        p.get("score", 0),
+                    "num_comments": p.get("num_comments", 0),
+                    "subreddit":    subreddit_name,
+                    "url":          p.get("url", ""),
                 })
             time.sleep(_DELAY)
             if results:
