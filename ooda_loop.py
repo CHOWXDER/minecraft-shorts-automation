@@ -35,13 +35,13 @@ def run_cycle() -> None:
         signals.extend(scraper.get_top_posts(sub))
     print(f"[OBSERVE] {len(signals)} raw signals collected")
 
-    if not signals:
-        print("[OBSERVE] No signals — skipping cycle")
-        return
-
     # ── ORIENT ────────────────────────────────────────────────────────────────
-    print("\n[ORIENT] Scoring with AI…")
-    scored = Orient().analyse(signals)
+    scored = []
+    if signals:
+        print("\n[ORIENT] Scoring with AI…")
+        scored = Orient().analyse(signals)
+    else:
+        print("[OBSERVE] Reddit blocked/empty — falling back to story bank")
 
     # ── DECIDE ────────────────────────────────────────────────────────────────
     print("\n[DECIDE] Finding best story…")

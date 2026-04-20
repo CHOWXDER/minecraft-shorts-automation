@@ -1,7 +1,13 @@
 import time
 import requests
 
-_HEADERS = {"User-Agent": "MinecraftBot/1.0"}
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    )
+}
 _DELAY   = 1.2   # seconds between requests — stay under Reddit rate limit
 
 
