@@ -1,33 +1,15 @@
 import os
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
 
 class Config:
-    # API Keys
-    API_KEY = os.environ.get('API_KEY')
-    ANOTHER_API_KEY = os.environ.get('ANOTHER_API_KEY')
-
-    # Subreddits to scrape
-    SUBREDDITS = [
-        'Minecraft',
-        'MinecraftBuddies',
-        'mcservers',
-        # Add more subreddits as needed
-    ]
-
-    # Video settings
-    VIDEO_SETTINGS = {
-        'resolution': '1920x1080',  # Full HD
-        'fps': 30,
-        'bitrate': '5000k',
-    }
-
-    # Upload schedule (in UTC)
-    UPLOAD_SCHEDULE = {
-        'days': ['Monday', 'Wednesday', 'Friday'],
-        'time': '14:00',  # 2 PM UTC
-    }
-
-    # Quality thresholds
-    QUALITY_THRESHOLDS = {
-        'min_views': 100,
-        'max_duration': 600,  # 10 minutes in seconds
-    }
+    OLLAMA_MODEL             = os.getenv("OLLAMA_MODEL", "llama3")
+    ELEVENLABS_API_KEY       = os.getenv("ELEVENLABS_API_KEY", "")
+    MINECRAFT_FOOTAGE_URL    = os.getenv("MINECRAFT_FOOTAGE_URL", "https://www.youtube.com/watch?v=85z7jqGAGcc")
+    GTA_FOOTAGE_URL          = os.getenv("GTA_FOOTAGE_URL", "")
+    WHISPER_MODEL            = os.getenv("WHISPER_MODEL", "base")
+    OUTPUT_DIR               = os.getenv("OUTPUT_DIR", "output")
+    SUBREDDITS               = ["AmItheAsshole", "relationship_advice", "tifu", "offmychest", "confessions"]
+    MIN_SCORE                = 500
+    CYCLE_INTERVAL_MINUTES   = 60

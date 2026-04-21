@@ -1,0 +1,47 @@
+{
+  "runs": [
+    {
+      "timestamp": "2026-04-08",
+      "phase": "GREEN",
+      "suite": "tests/test_produce.py",
+      "passed": 39,
+      "failed": 0,
+      "errors": 0,
+      "coverage": [
+        "WordCue fields + edge cases",
+        "Config defaults + overrides",
+        "SubtitleEngine._ass_time (zero, minutes, hours, centiseconds, rounding)",
+        "SubtitleEngine._anim_tags (all 4 animations, unknown → empty)",
+        "SubtitleEngine._inject_emoji (known, punctuation, unknown, case, position)",
+        "SubtitleEngine.build (file created, ASS sections, card count, capitalisation, colour cycling, font size)",
+        "TTSEngine cache key (deterministic, text diff, voice diff, cache hit copies file)",
+        "Renderer._safe_path (relative has no colon, forward slashes, outside-cwd escaping)",
+        "make_video smoke (returns path, Config forwarded correctly)"
+      ]
+    },
+    {
+      "timestamp": "2026-04-08",
+      "phase": "GREEN",
+      "suite": "tests/test_free_pipeline.py",
+      "passed": 23,
+      "failed": 0,
+      "errors": 0,
+      "coverage": [
+        "RedditScraper: no praw import, JSON parsing, HTTP error handling, quality filter, URL params, no env vars needed",
+        "Orient: no anthropic import, heuristic fallback, viability, empty signals, heuristic-when-ollama-down, sorted output",
+        "Orient: Ollama batch parses mocked response + computes composite score, synthesise_trends structure",
+        "Orient: probe_ollama marks unavailable on connection error, marks available on 200",
+        "TTSEngine: no-api-key path calls edge_tts, FALLBACK_VOICE is Microsoft Neural"
+      ]
+    },
+    {
+      "timestamp": "2026-04-08",
+      "phase": "GREEN",
+      "suite": "tests/ (combined)",
+      "passed": 62,
+      "failed": 0,
+      "errors": 0,
+      "coverage": ["all above"]
+    }
+  ]
+}
